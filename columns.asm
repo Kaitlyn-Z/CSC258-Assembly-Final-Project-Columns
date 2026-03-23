@@ -541,6 +541,9 @@ jal lock_curr_col
 chain_reaction_loop:
 # Check 3-in-a-row in conditions: vertical, horizontal, diagonal
 jal check_vertical_matches
+jal check_horizontal_matches
+jal check_down_left_matches
+jal check_down_right_matches
 
 # Apply deletions
 jal delete_match
@@ -666,7 +669,7 @@ addi $sp, $sp, -16           # Preserve ra & colors in s0-2 (prevents override i
 sw $ra, 12($sp)
 sw $s0, 8($sp)
 sw $s1, 4($sp)
-sw $s0, 0($sp)
+sw $s2, 0($sp)
 
 li $t8, 0                   # Initialize the row counter
 li $t4, 18                  # Load the height - 2
@@ -711,6 +714,231 @@ blt $t9, $t0, vertical_col_loop         # Continue loop if boundary hasn't been 
 
 addi $t8, $t8, 1                        # Increment row counter (next row)
 blt $t8, $t4, vertical_row_loop         # Continue loop if boundary hasn't been reached
+
+lw $s2, 0($sp)                          # Restore ra & pop color values
+lw $s1, 4($sp)
+lw $s0, 8($sp)
+lw $ra, 12($sp)
+addi $sp, $sp, 16                        
+jr $ra
+
+
+### Perform a horizontal scan on any horizontal 3-in-a-row gems
+### Variables:
+### - $s0 = Color of current gem
+### - $s1 = Color of second gem (one row down)
+### - $s2 = Color of third gem (two rows down)
+### - $t0 = Holder for width of playing field (11)
+### - $t1 = Byte offset of current gem (in memory)
+### - $t2 = Address of current gem (in memory)
+### - $t3 = Marker for match (marking 1 in temp_grid for gems that needs deletion)
+### - $t4 = Holder for width - 2 of playing field (9)
+### - $t5 = Holder of memory of playable grid & temporary grid
+### - $t6 = Holder for height of the playing field (20)
+### - $t8 = Counter for the rows/Y coordinates (looping from 0-17, for Y+2)
+### - $t9 = Counter for the columns/X coordinates (0-10)
+
+check_horizontal_matches:
+addi $sp, $sp, -16           # Preserve ra & colors in s0-2 (prevents override in collision)
+sw $ra, 12($sp)
+sw $s0, 8($sp)
+sw $s1, 4($sp)
+sw $s2, 0($sp)
+
+li $t8, 0                   # Initialize the row counter
+li $t4, 9                   # Load the width - 2
+lw $t6, grid_height         # Load the height of playing field (20)
+
+# Loop over the rows of the playing field
+horizontal_row_loop:
+li $t9, 0                               # Initialize the column index counter
+
+# Loop through the grid of each row
+horizontal_col_loop:
+# Calculate the index of current gem in memory
+lw $t0, grid_width                      # Load width of playing field
+mult $t8, $t0                           # Address for start of current row         
+mflo $t1
+add $t1, $t1, $t9                       # Add the column offset
+sll $t1, $t1, 2                         # Multiply by 4 to get index in memory
+
+# Load the colors
+la $t5, grid                            # Load the memory of the grid
+add $t2, $t5, $t1                       # Get the address of the current gem
+lw $s0, 0($t2)                          # Load the 1st gem's color
+lw $s1, 4($t2)                          # Load 2nd gem's color (+ 4 bytes)
+lw $s2, 8($t2)                          # Load 3rd gem's color
+
+# Check for matches
+beq $s0, $zero, horizontal_next_col       # Check if current grid is empty (if so, no match)
+bne $s0, $s1, horizontal_next_col         # Check if the second gem has same color (if not, move to next loop)
+bne $s0, $s2, horizontal_next_col         # Check the third gem
+
+# If all checks passed: Horizontal 3-in-a-row -> Mark the temp_grid for deletion
+la $t5, temp_grid                       # Load the temporary grid
+add $t2, $t5, $t1                       # Similarly, get address for current gem
+li $t3, 1                               # Load the marker
+sw $t3, 0($t2)                          # Mark the gems as 1 for deletion afterwards
+sw $t3, 4($t2)
+sw $t3, 8($t2)
+
+# Skip to the next column (grid on a row)
+horizontal_next_col:
+addi $t9, $t9, 1                        # Increment column counter
+blt $t9, $t4, horizontal_col_loop       # Continue loop if boundary hasn't been reached
+
+addi $t8, $t8, 1                        # Increment row counter (next row)
+blt $t8, $t6, horizontal_row_loop       # Continue loop if boundary hasn't been reached
+
+lw $s2, 0($sp)                          # Restore ra & pop color values
+lw $s1, 4($sp)
+lw $s0, 8($sp)
+lw $ra, 12($sp)
+addi $sp, $sp, 16                        
+jr $ra
+
+
+### Perform a diagonal down_left scan on any diagonal 3-in-a-row gems
+### Variables:
+### - $s0 = Color of current gem
+### - $s1 = Color of second gem (one row down)
+### - $s2 = Color of third gem (two rows down)
+### - $t0 = Holder for width of playing field (11)
+### - $t1 = Byte offset of current gem (in memory)
+### - $t2 = Address of current gem (in memory)
+### - $t3 = Marker for match (marking 1 in temp_grid for gems that needs deletion)
+### - $t4 = Holder for width of playing field (11)
+### - $t5 = Holder of memory of playable grid & temporary grid
+### - $t6 = Holder for height - 2 of the playing field (20)
+### - $t8 = Counter for the rows/Y coordinates (looping from 0-17, for Y+2)
+### - $t9 = Counter for the columns/X coordinates (2-10)
+
+check_down_left_matches:
+addi $sp, $sp, -16           # Preserve ra & colors in s0-2 (prevents override in collision)
+sw $ra, 12($sp)
+sw $s0, 8($sp)
+sw $s1, 4($sp)
+sw $s2, 0($sp)
+
+li $t8, 0                   # Initialize the row counter
+li $t4, 11                  # Load the width
+li $t6, 18                  # Load the height of playing field
+
+# Loop over the rows of the playing field
+down_left_row_loop:
+li $t9, 2                               # Initialize the column index counter
+
+# Loop through the grid of each row
+down_left_col_loop:
+# Calculate the index of current gem in memory
+lw $t0, grid_width                      # Load width of playing field
+mult $t8, $t0                           # Address for start of current row         
+mflo $t1
+add $t1, $t1, $t9                       # Add the column offset
+sll $t1, $t1, 2                         # Multiply by 4 to get index in memory
+
+# Load the colors
+la $t5, grid                            # Load the memory of the grid
+add $t2, $t5, $t1                       # Get the address of the current gem
+lw $s0, 0($t2)                          # Load the 1st gem's color
+lw $s1, 40($t2)                         # Load 2nd gem's color (Down 1 & Left 1: 44 - 4)
+lw $s2, 80($t2)                         # Load 3rd gem's color (Down 2 & Left 2: 88 - 8)
+
+# Check for matches
+beq $s0, $zero, down_left_next_col       # Check if current grid is empty (if so, no match)
+bne $s0, $s1, down_left_next_col         # Check if the second gem has same color (if not, move to next loop)
+bne $s0, $s2, down_left_next_col         # Check the third gem
+
+# If all checks passed: Diagonal 3-in-a-row -> Mark the temp_grid for deletion
+la $t5, temp_grid                       # Load the temporary grid
+add $t2, $t5, $t1                       # Similarly, get address for current gem
+li $t3, 1                               # Load the marker
+sw $t3, 0($t2)                          # Mark the gems as 1 for deletion afterwards
+sw $t3, 40($t2)
+sw $t3, 80($t2)
+
+# Skip to the next column (grid on a row)
+down_left_next_col:
+addi $t9, $t9, 1                        # Increment column counter
+blt $t9, $t4, down_left_col_loop        # Continue loop if boundary hasn't been reached
+
+addi $t8, $t8, 1                        # Increment row counter (next row)
+blt $t8, $t6, down_left_row_loop        # Continue loop if boundary hasn't been reached
+
+lw $s2, 0($sp)                          # Restore ra & pop color values
+lw $s1, 4($sp)
+lw $s0, 8($sp)
+lw $ra, 12($sp)
+addi $sp, $sp, 16                        
+jr $ra
+
+
+### Perform a diagonal down_right scan on any diagonal 3-in-a-row gems
+### Variables:
+### - $s0 = Color of current gem
+### - $s1 = Color of second gem (one row down)
+### - $s2 = Color of third gem (two rows down)
+### - $t0 = Holder for width of playing field (11)
+### - $t1 = Byte offset of current gem (in memory)
+### - $t2 = Address of current gem (in memory)
+### - $t3 = Marker for match (marking 1 in temp_grid for gems that needs deletion)
+### - $t4 = Holder for width - 2 of playing field (9)
+### - $t5 = Holder of memory of playable grid & temporary grid
+### - $t6 = Holder for height - 2 of the playing field (20)
+### - $t8 = Counter for the rows/Y coordinates (looping from 0-17, for Y+2)
+### - $t9 = Counter for the columns/X coordinates (0-10)
+
+check_down_right_matches:
+addi $sp, $sp, -16           # Preserve ra & colors in s0-2 (prevents override in collision)
+sw $ra, 12($sp)
+sw $s0, 8($sp)
+sw $s1, 4($sp)
+sw $s2, 0($sp)
+
+li $t8, 0                   # Initialize the row counter
+li $t4, 9                   # Load the width - 2
+li $t6, 18                  # Load the height of playing field (20)
+
+# Loop over the rows of the playing field
+down_right_row_loop:
+li $t9, 0                               # Initialize the column index counter
+
+# Loop through the grid of each row
+down_right_col_loop:
+# Calculate the index of current gem in memory
+lw $t0, grid_width                      # Load width of playing field
+mult $t8, $t0                           # Address for start of current row         
+mflo $t1
+add $t1, $t1, $t9                       # Add the column offset
+sll $t1, $t1, 2                         # Multiply by 4 to get index in memory
+
+# Load the colors
+la $t5, grid                            # Load the memory of the grid
+add $t2, $t5, $t1                       # Get the address of the current gem
+lw $s0, 0($t2)                          # Load the 1st gem's color
+lw $s1, 48($t2)                         # Load 2nd gem's color (Down 1 & Right 1: 44 + 4)
+lw $s2, 96($t2)                         # Load 3rd gem's color (Down 2 & Right 2: 88 + 8)
+
+# Check for matches
+beq $s0, $zero, down_right_next_col       # Check if current grid is empty (if so, no match)
+bne $s0, $s1, down_right_next_col         # Check if the second gem has same color (if not, move to next loop)
+bne $s0, $s2, down_right_next_col         # Check the third gem
+
+# If all checks passed: Diagonal 3-in-a-row -> Mark the temp_grid for deletion
+la $t5, temp_grid                       # Load the temporary grid
+add $t2, $t5, $t1                       # Similarly, get address for current gem
+li $t3, 1                               # Load the marker
+sw $t3, 0($t2)                          # Mark the gems as 1 for deletion afterwards
+sw $t3, 48($t2)
+sw $t3, 96($t2)
+
+# Skip to the next column (grid on a row)
+down_right_next_col:
+addi $t9, $t9, 1                        # Increment column counter
+blt $t9, $t4, down_right_col_loop         # Continue loop if boundary hasn't been reached
+
+addi $t8, $t8, 1                        # Increment row counter (next row)
+blt $t8, $t6, down_right_row_loop         # Continue loop if boundary hasn't been reached
 
 lw $s2, 0($sp)                          # Restore ra & pop color values
 lw $s1, 4($sp)
@@ -804,12 +1032,20 @@ jr $ra
 
 
 ### Drop any hovering gems
-### Variables: ADD Variables here
+### Variables:
+### - $a0 = Current X coordinate of column (topmost gem)
+### - $a1 = Current Y coordinate of column (topmost gem)
+### - $a2 = Load the black palette from $t7 to pain pixel
 ### - $s0 = Width of playing field
 ### - $s1 = Height of playing field
 ### - $s2 = Counter for the rows/Y coordinates (0-19)
 ### - $s3 = Counter for the columns/X coordinates (0-10)
-### - $s4 = Check if the 
+### - $s4 = Check if anything has been dropped
+### - $t0 = Holder of index of first row (0) - for the counter
+### - $t1 = Byte offset of current gem (in memory)
+### - $t2 = Address of current gem (in memory)
+### - $t3 = Color of the current gem
+### - $t7 = Black palette for repainting
 
 collapse_columns:
 addi $sp, $sp, -28
@@ -818,14 +1054,14 @@ sw $s0, 20($sp)    # Width
 sw $s1, 16($sp)    # Height
 sw $s2, 12($sp)    # X counter
 sw $s3, 8($sp)     # Y counter
-sw $s4, 4($sp)     # "Moved" flag
+sw $s4, 4($sp)     # Dropped gem flag
 sw $s5, 0($sp)     # Temp color storage
 
 lw $s0, grid_width
 lw $s1, grid_height
 
 collapse_outer_loop:
-li $s4, 0               # Reset "Moved" flag to 0 at start of pass
+li $s4, 0               # Initialize/reset Drop flag to 0
 li $s2, 0               # Start at Col 0
 
 col_loop:
@@ -836,57 +1072,55 @@ row_loop:
 mult $s3, $s0
 mflo $t1
 add $t1, $t1, $s2
-sll $t1, $t1, 2         # Byte offset for current (Bottom-most)
+sll $t1, $t1, 2         # Byte offset for current gem (Bottom-most) in memory
     
 la $t0, grid
-add $t2, $t0, $t1       # Address of Grid[X, Y]
+add $t2, $t0, $t1       # Address of current grid 
 lw $t3, 0($t2)          # Load current color
     
-bne $t3, $zero, next_row # If not empty, we can't drop anything here
+bne $t3, $zero, next_row        # If not empty, we can't drop anything here
 
-# Check the spot ABOVE: Grid[X, Y-1]
-lw $s5, -44($t2)        # Load color from one row up (-11 words = -44 bytes)
+# Check the spot above the grid
+lw $s5, -44($t2)                # Load color from one row up (-11 words = -44 bytes)
 beq $s5, $zero, next_row # If above is also empty, nothing to drop
 
-# DROP THE GEM
-sw $s5, 0($t2)          # Move color down
-sw $zero, -44($t2)      # Clear old spot
-li $s4, 1               # Mark that we moved something!
+# Drop the gem
+sw $s5, 0($t2)                  # Move color down
+sw $zero, -44($t2)              # Clear old spot
+li $s4, 1                       # Mark for dropping
 
-# Redraw the two pixels
-# Draw New Position
-addi $a0, $s2, 5        # Screen X
-addi $a1, $s3, 5        # Screen Y
-move $a2, $s5           # The color we just dropped
+# Draw gem at new position
+addi $a0, $s2, 5        # Reload current coordinates (X, Y) in playing field
+addi $a1, $s3, 5  
+move $a2, $s5           # Color of dropped gem
 jal draw_pixel
 
-# Draw Old Position (Black)
-addi $a0, $s2, 5
-addi $a1, $s3, -1       # Y - 1
-addi $a1, $a1, 5        # Add screen offset
+# Repaint old position to black
+addi $a0, $s2, 5        # Get (X, Y) coordinates on screen
+addi $a1, $s3, -1       # The row above current grid (position before dropping)
+addi $a1, $a1, 5
 la $t7, black_palette
 lw $a2, 0($t7)
 jal draw_pixel
 
 next_row:
-addi $s3, $s3, -1
+addi $s3, $s3, -1        # Decrement row - move to row above
 li $t0, 0
-bgt $s3, $t0, row_loop   # Loop up to Row 1
+bgt $s3, $t0, row_loop   # Continue looping id the top row has not been reached 
 
 addi $s2, $s2, 1
 blt $s2, $s0, col_loop
 
-# If we moved anything ($s4 == 1), we must scan the whole grid again
-# to handle gems falling multiple rows!
-bne $s4, $zero, collapse_outer_loop 
+# Repeat the scanning process if anything above the gem needs to be dropped as well
+bne $s4, $zero, collapse_outer_loop         # If anything has been moved, repeat loop
 
-lw $s5, 0($sp)
+lw $s5, 0($sp)                              # Pop the variables stored from stack
 lw $s4, 4($sp)
 lw $s3, 8($sp)
 lw $s2, 12($sp)
 lw $s1, 16($sp)
 lw $s0, 20($sp)
-lw $ra, 24($sp)
-addi $sp, $sp, 28
+lw $ra, 24($sp)                             # Restore ra
+addi $sp, $sp, 28   
 jr $ra
 
