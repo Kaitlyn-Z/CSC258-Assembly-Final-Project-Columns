@@ -97,9 +97,9 @@ main:
     la $t1, gem1_color             # Load the initialized color
     jal draw_curr_col
     
-    # Create a game loop - updating ~60 times per second
-    # Within the loop:
-    game_loop:
+# Create a game loop - updating ~60 times per second
+# Within the loop:
+game_loop:
     
     # Check the keyboard for inputs
     lw $t0, ADDR_KBRD               # Go to the keyboard address
@@ -146,7 +146,6 @@ main:
 ### $a1 - The Y coordinate for start of a vertical/horizontal line
 ### $a2 - The color of the grid (all gray for boundaries)
 ### $a3 - The length of the line being drawn (full width/height)
-
 draw_playing_field:
     addi $sp, $sp, -4              # Preserve ra
     sw $ra, 0($sp)
