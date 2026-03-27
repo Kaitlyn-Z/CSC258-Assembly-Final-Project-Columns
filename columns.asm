@@ -27,7 +27,7 @@ ADDR_KBRD:
     .word 0xffff0000
     
     # Palette Array for Random Selection
-    palette: .word 0xff0000, 0xffa500, 0xffff00, 0x00ff00, 0x0000ff, 0x800080
+    palette: .word 0xf56527, 0xffd72b, 0xcff5a4, 0x61e5fa, 0x8365f0, 0xfcadff
     grid_color: .word 0x808080    # Gray for boundaries
     black_palette: .word 0x000000, 0x000000, 0x000000 # A palette with only black - for repaiting grid cells
     
