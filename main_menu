@@ -113,7 +113,10 @@ game_loop:
     bne $t3, $t4, check_play_pause      # If not in main menu, play normally
 
     beq $t2, $zero, skip_input          # If no key pressed, skip and loop
-    j start_from_menu
+    
+    lw $t2, 4($t0)
+    beq $t2, 0x20, start_from_menu      # If space is pressed, start game
+    j skip_input
 
 check_play_pause:
     # No key pressed
