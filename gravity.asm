@@ -27,13 +27,9 @@ ADDR_KBRD:
     .word 0xffff0000
     
     # Palette Array for Random Selection
-    palette: .word 0xf56527, 0xffd72b, 0xcff5a4, 0x61e5fa, 0x8365f0, 0xfcadff
+    palette: .word 0xff0000, 0xffa500, 0xffff00, 0x00ff00, 0x0000ff, 0x800080
     grid_color: .word 0x808080    # Gray for boundaries
     black_palette: .word 0x000000, 0x000000, 0x000000 # A palette with only black - for repaiting grid cells
-    
-    # Palette for text
-    text_color: .word 0xffffff  # White text
-    text_box_color: .word 0x202020  # Dark grey for text boxes
     
     # Parameters for the playing field:
     # Information about the grid
@@ -75,14 +71,10 @@ ADDR_KBRD:
     # Gravity counter
     gravity_counter: .word 0
 
-    # Current game state
-    # 0 = Playing
-    # 1 = Paused
-    # Future: 2 = main menu?
-    game_state: .word 0
 
 .text
 .globl main
+
 
 # NOTE: Calculation for bitmap address = base address + (Y*row_size_bytes) + X*4
 #       MAKE AN EXCEL SHEET to keep track of the status of registers during each function!!
@@ -96,6 +88,8 @@ ADDR_KBRD:
 #   $t2 = status of the keyboard (whether there is key-press & what key it is)
 ##############################################################################
 main:
+    # Clear the screen (Implement later)
+
     # Initialize playing field & column
     jal draw_playing_field              # Call the Playing Field function
     jal generate_col                    # Generate current column (not displayed yet)
@@ -120,29 +114,20 @@ game_loop:
     lw $t2, 0($t0)                      # Get the first word to check input
     
     # No key pressed
-    beq $t2, 0, handle_gravity          # If no key pressed, drop column down (if not paused)
+    beq $t2, 0, run_gravity              # If no key pressed, drop column down slowly
     
     # If key has been pressed: compute movement based on key
     lw $t2, 4($t0)                      # Get the value of key
-    beq $t2, 0x70, handle_pause         # If the key is "P", handle pause logic
-    
-    # Check game state
-    lw $t3, game_state                  # Load current game state
-    bne $t3, $zero, skip_input          # If paused (state 1), ignore move keys
-
-    # Handle movement    
     beq $t2, 0x61, move_left            # If the key is "A", move left
     beq $t2, 0x64, move_right           # If the key is "D", move right
     beq $t2, 0x77, shuffle_col          # If the key is "W", shuffle the column
     beq $t2, 0x73, drop_at_once         # If the key is "S", drop the column all the way down
-    beq $t2, 0x71, quit_game            # If the key is "Q", quit game
-
-handle_gravity:    # TODO: Edit eventually to take in different difficulty modes
-    # Check if game state is 1 (paused)
-    lw $t3, game_state                  # Load game state
-    bne $t3, $zero, skip_input
     
-    # Continue applying gravity if game currently playing (state 0)
+    # TODO: Add press 'P' for pause
+    
+    beq $t2, 0x71, quit_game            # If key is "Q", quit game
+
+run_gravity:    # TODO: Edit eventually to take in different difficulty modes
     # Handle gravity timer
     lw $t0, gravity_counter             # Load in counter
     lw $t1, gravity_threshold           # Load in threshold for counter to reach before dropping block
@@ -165,54 +150,14 @@ skip_input:
 
     j game_loop                         # Repeat the process
     
-handle_pause:
-    jal toggle_pause                    # Turn pause menu off or on, depending on state
-    j game_loop                         # Wait for next key press
-    
 quit_game:
     li $v0, 10                          # Terminate gracefully
     syscall
 
 ##############################################################################
-# Toggle Pause: Handles switching between playing and paused
-#   $t0 - current state
-##############################################################################
-toggle_pause:
-    addi $sp, $sp, -4                   # Move stack pointer
-    sw $ra, 0($sp)                      # Store ra in stack
-
-    lw $t0, game_state                  # Load in game state
-    bne $t0, $zero, resume_game         # If game state is 1 (paused), resume
-
-    # Handle when game gets paused
-    li $t0, 1
-    sw $t0, game_state                  # Update game state to 1 (paused)
-    jal draw_pause_menu                 # Draw the paused menu
-    j end_toggle                        # Return
-
-resume_game:
-    sw $zero, game_state                # Update game state to 0 (playing)
-    
-    # Clear entire screen (removes text box and text)
-    jal clear_screen                    # Black out entire screen
-    
-    # Wipe the menu by redrawing everything
-    jal draw_playing_field              # Redraw game board
-    jal redraw_grid_contents            # Redraw all landed gems
-    
-    # Redraw active falling column
-    lw $a0, curr_col_x                  # Load in current x
-    lw $a1, curr_col_y                  # Load in current y
-    la $t1, gem1_color                  # Get gem colors
-    jal draw_curr_col                   # Draw
-
-end_toggle:
-    lw $ra, 0($sp)                      # Get ra from stack
-    addi $sp, $sp, 4                    # Move stack pointer
-    jr $ra                              # Return
-
-##############################################################################
 # Drawing the playing field
+#   USED IN: main
+#
 #   $a0 - The X coordinate for start of a vertical/horizontal line
 #   $a1 - The Y coordinate for start of a vertical/horizontal line
 #   $a2 - The color of the grid (all gray for boundaries)
@@ -253,268 +198,11 @@ draw_playing_field:
     lw $ra, 0($sp)                      # Restore ra
     addi $sp, $sp, 4
     jr $ra
-    
-##############################################################################
-# Clear screen: Sets every pixel to black
-#   $t0 = display base address
-#   $t1 = color black
-#   $t2 = pixel counter (1024 total)
-##############################################################################
-clear_screen:
-    lw $t0, displayaddress
-    li $t1, 0x000000                    # Black
-    li $t2, 1024                        # 32 units * 32 units
-    
-clear_screen_loop:
-    sw $t1, 0($t0)
-    addi $t0, $t0, 4                    # Go to next pixel
-    addi $t2, $t2, -1                   # Decrement number of pixels
-    bnez $t2, clear_screen_loop         # Continue blacking out pixels
-    jr $ra
-    
-##############################################################################
-# Draw pause menu: Paints the rectangle and text
-#   $a0 = X Coordinate
-#   $a1 = Y Coordinate
-#   $a2 = Color
-#   $a3 = Width
-#   $t5 = Height counter
-##############################################################################
-draw_pause_menu:
-    addi $sp, $sp, -4                   # Move stack pointer
-    sw $ra, 0($sp)                      # Store ra
-
-    # Draw grey rectangle for text to go on
-    lw $a2, text_box_color
-    li $a0, 4                           # X coordinate of top left corner
-    li $a1, 11                           # Y coordinate of top left corner
-    li $a3, 25                          # Width of box
-    li $t5, 9                          # Height of box
-    
-draw_box_loop:
-    jal draw_hor_line                   # Draw horizontal line in grey
-    addi $a1, $a1, 1                    # 
-    addi $a0, $a0, -25      # Reset X
-    addi $t5, $t5, -1
-    bgtz $t5, draw_box_loop
-
-    # Set Text Anchor
-    lw $a2, text_color
-    li $s0, 5                           # Fixed X starting point (top left)
-    li $s1, 13                          # Fixed Y anchor for all letters
-    
-    # P
-    move $a0, $s0
-    move $a1, $s1                       # Reset Y to anchor
-    jal draw_letter_P
-    
-    # A
-    addi $a0, $s0, 4                    # Offset X
-    move $a1, $s1                       # Reset Y to anchor
-    jal draw_letter_A
-    
-    # U
-    addi $a0, $s0, 8                    # Offset X
-    move $a1, $s1                       # Reset Y to anchor
-    jal draw_letter_U
-    
-    # S
-    addi $a0, $s0, 12                   # Offset X
-    move $a1, $s1                       # Reset Y to anchor
-    jal draw_letter_S
-    
-    # E
-    addi $a0, $s0, 16                   # Offset X
-    move $a1, $s1                       # Reset Y to anchor
-    jal draw_letter_E
-    
-    # D
-    addi $a0, $s0, 20                   # Offset X
-    move $a1, $s1                       # Reset Y to anchor
-    jal draw_letter_D
-
-    lw $ra, 0($sp)
-    addi $sp, $sp, 4
-    jr $ra
-    
-##############################################################################
-# Letter functions (3x5)
-#   $a0 = Top Left x of letter
-#   $a1 = Top Left y of letter
-#   $a2 = Color
-##############################################################################
-draw_letter_P:
-    addi $sp, $sp, -4
-    sw $ra, 0($sp)
-    jal draw_pixel          # Top-left stem
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel          # Middle-left
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel          # Bottom-left stem
-    addi $a1, $a1, -4       # Back to top
-    addi $a0, $a0, 1
-    jal draw_pixel          # Top-middle
-    addi $a0, $a0, 1
-    jal draw_pixel          # Top-right
-    addi $a1, $a1, 1
-    jal draw_pixel          # Right side of loop
-    addi $a1, $a1, 1
-    jal draw_pixel          # Bottom-right of loop
-    addi $a0, $a0, -1
-    jal draw_pixel          # Bottom-middle of loop (at Y+2)
-    lw $ra, 0($sp)
-    addi $sp, $sp, 4
-    jr $ra
-
-draw_letter_A:
-    addi $sp, $sp, -4
-    sw $ra, 0($sp)
-    addi $a1, $a1, 1        # Skip top-left corner for slanted look
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel          # Left middle
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel          # Left bottom
-    addi $a1, $a1, -4       # Back to top row
-    addi $a0, $a0, 1
-    jal draw_pixel          # Top middle cap
-    addi $a1, $a1, 2
-    jal draw_pixel          # Middle bar
-    addi $a1, $a1, -2
-    addi $a0, $a0, 1
-    addi $a1, $a1, 1
-    jal draw_pixel          # Right stem starts
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel          # Right stem bottom
-    lw $ra, 0($sp)
-    addi $sp, $sp, 4
-    jr $ra
-
-draw_letter_U:
-    addi $sp, $sp, -4
-    sw $ra, 0($sp)
-    jal draw_pixel          # Left Stem
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel          # Bottom Left Corner
-    addi $a0, $a0, 1
-    jal draw_pixel          # Bottom Middle
-    addi $a0, $a0, 1
-    jal draw_pixel          # Bottom Right Corner
-    addi $a1, $a1, -1
-    jal draw_pixel          # Right Stem
-    addi $a1, $a1, -1
-    jal draw_pixel
-    addi $a1, $a1, -1
-    jal draw_pixel
-    addi $a1, $a1, -1
-    jal draw_pixel
-    lw $ra, 0($sp)
-    addi $sp, $sp, 4
-    jr $ra
-
-draw_letter_S:
-    addi $sp, $sp, -4
-    sw $ra, 0($sp)
-    addi $a0, $a0, 1
-    jal draw_pixel          # Top row
-    addi $a0, $a0, 1
-    jal draw_pixel
-    addi $a0, $a0, -2
-    jal draw_pixel          # Top-left pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a0, $a0, 1
-    jal draw_pixel          # Middle pixel
-    addi $a0, $a0, 1
-    jal draw_pixel          # Middle-right
-    addi $a1, $a1, 1
-    jal draw_pixel          # Bottom-right stem
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a0, $a0, -1
-    jal draw_pixel          # Bottom row
-    addi $a0, $a0, -1
-    jal draw_pixel
-    lw $ra, 0($sp)
-    addi $sp, $sp, 4
-    jr $ra
-
-draw_letter_E:
-    addi $sp, $sp, -4
-    sw $ra, 0($sp)
-    jal draw_pixel          # Stem
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, -4       # Top Bar
-    addi $a0, $a0, 1
-    jal draw_pixel
-    addi $a0, $a0, 1
-    jal draw_pixel
-    addi $a0, $a0, -1       # Middle Bar
-    addi $a1, $a1, 2
-    jal draw_pixel
-    addi $a1, $a1, 2        # Bottom Bar
-    jal draw_pixel
-    addi $a0, $a0, 1
-    jal draw_pixel
-    lw $ra, 0($sp)
-    addi $sp, $sp, 4
-    jr $ra
-
-draw_letter_D:
-    addi $sp, $sp, -4
-    sw $ra, 0($sp)
-    jal draw_pixel          # Full Left Stem
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, -4       # Top part
-    addi $a0, $a0, 1
-    jal draw_pixel
-    addi $a1, $a1, 4        # Bottom part
-    jal draw_pixel
-    addi $a0, $a0, 1        # Right Stem (Middle section)
-    addi $a1, $a1, -1
-    jal draw_pixel
-    addi $a1, $a1, -1
-    jal draw_pixel
-    addi $a1, $a1, -1
-    jal draw_pixel
-    lw $ra, 0($sp)
-    addi $sp, $sp, 4
-    jr $ra
 
 ##############################################################################
 # Drawing a horizontal line
+#   USED IN: draw_playing_field
+#
 #   $a0 = The X coordinate of the start of the line
 #   $a1 = The Y coordinate of the start of the line
 #   $a2 = The color of the line
@@ -542,6 +230,8 @@ end_hor_loop:
 
 ##############################################################################
 # Drawing a vertical line
+#   USED IN: draw_playing_field
+#
 #   $a0 = The X coordinate of the start of the line
 #   $a1 = The Y coordinate of the start of the line
 #   $a2 = The color of the line
@@ -569,6 +259,8 @@ end_ver_loop:
     
 ##############################################################################
 # Drawing a single pixel
+#   USED IN: draw_hor_line, draw_ver_line, draw_curr_col, delete_match, collapse_col
+#
 #   $a0 = The X coordinate of the pixel
 #   $a1 = The Y coordinate of the pixel
 #   $a2 = The color of the gem
@@ -590,6 +282,8 @@ draw_pixel:
     
 ##############################################################################
 # Generate a 3-gem column with random colors in memory (no display)
+#   USED IN: main, drop_at_once
+#
 #   $a0 = Index pointing to a color (random selection)
 #   $t1 = Index counter for number of gems
 #   $t2 = Store memory address of the gems (starting with 1st)
@@ -629,6 +323,8 @@ end_generate_col_loop:
 
 ##############################################################################
 # Drawing the current column
+#   USED IN: main
+#
 #   $a0 = Current X coordinate of column (topmost gem)
 #   $a1 = Current Y coordinate of column (topmost gem)
 #   $a2 = Current gem's color
@@ -666,48 +362,9 @@ end_draw_curr_col_loop:
     jr $ra
 
 ##############################################################################
-# Redraw Grid Contents: Restores the board after the menu disappears
-#   $s0 - X counter
-#   $s1 - Y counter
-#   $v0 - Color returned from memory
-##############################################################################
-redraw_grid_contents:
-    addi $sp, $sp, -12                  # Move stack pointer, store x, y, and ra
-    sw $ra, 8($sp)
-    sw $s0, 4($sp)
-    sw $s1, 0($sp)
-
-    li $s1, 0                           # Initialize y counter
-    
-row_redraw:
-    li $s0, 0                           # Initialize x counter
-    
-col_redraw:
-    # Convert grid index to bitmap coords (X+5, Y+5 for offsets)
-    addi $a0, $s0, 5                
-    addi $a1, $s1, 5
-    jal get_grid_value                  # Check grid memory
-    move $a2, $v0                       # Get color
-    beq $a2, $zero, skip_redraw_pixel   # If empty, don't draw
-    jal draw_pixel                      # Draw gem
-
-skip_redraw_pixel:
-    addi $s0, $s0, 1                    # Increment x counter
-    li $t7, 11                          # grid_width
-    blt $s0, $t7, col_redraw            # Check if you're at the end of the row
-    
-    addi $s1, $s1, 1                    # Increment y counter
-    li $t7, 20                          # grid_height
-    blt $s1, $t7, row_redraw
-
-    lw $s1, 0($sp)
-    lw $s0, 4($sp)
-    lw $ra, 8($sp)
-    addi $sp, $sp, 12
-    jr $ra    
-
-##############################################################################
 # Move down by one pixel (gravity functionality)
+#   USED IN: run_gravity
+#   
 #   $a0 = Current X coordinate of column (topmost gem)
 #   $a1 = Current Y coordinate of column (topmost gem)
 #   $t1 = Current color of the gems
@@ -761,6 +418,8 @@ end_move_down:
     
 ##############################################################################
 # Move left by one pixel (when "A" is pressed)
+#   USED IN: 
+#
 #   $a0 = Current X coordinate of column (topmost gem)
 #   $a1 = Current Y coordinate of column (topmost gem)
 #   $t1 = Current color of the gems
@@ -805,6 +464,8 @@ move_left:
     
 ##############################################################################
 # Move right by one pixel (when "D" is pressed)
+#   USED IN:
+# 
 #   $a0 = Current X coordinate of column (topmost gem)
 #   $a1 = Current Y coordinate of column (topmost gem)
 #   $t1 = Current color of the gems
@@ -849,6 +510,7 @@ move_right:
 
 ##############################################################################
 # Dropping a column to the bottom at once when "S" is pressed
+# 
 #   $s0 = (Safety storage) Current X coordinate of column (topmost gem)
 #   $s1 = (Safety storage) Current Y coordinate of column (topmost gem)
 #   $s4 = Checker for whether any gems are deleted
@@ -903,6 +565,8 @@ collision_final:
 
 ##############################################################################
 # Shuffle the columns when "W" is pressed (top->mid, mid->bot, bot->top)
+#   USED IN:
+#
 #   $a0 = Current X coordinate of column (topmost gem)
 #   $a1 = Current Y coordinate of column (topmost gem)
 #   $t0 = Color of top gem
@@ -933,6 +597,8 @@ shuffle_col:
 
 ##############################################################################
 # Check if a grid within the playing field is occupied
+#   USED IN:
+#
 #   $a0 = Current X coordinate of column (topmost gem)
 #   $a1 = Current Y coordinate of column (topmost gem)
 #   $v0 = Value of grid being checked (returns color, or 0 if empty)
@@ -963,6 +629,8 @@ get_grid_value:
 
 ##############################################################################
 # Collision checking
+#   USED IN: 
+#
 #   $s0 = (Safety storage) Current X coordinate of column (topmost gem)
 #   $s1 = (Safety storage) Current Y coordinate of column (topmost gem)
 #   $s4 = Checker for whether any gems are deleted
@@ -994,6 +662,7 @@ collision:
 
 ##############################################################################
 # Chain reaction for checking & deleting matches
+#   USED IN: 
 #   $s0 = (Safety storage) Current X coordinate of column (topmost gem)
 #   $s1 = (Safety storage) Current Y coordinate of column (topmost gem)
 #   $s4 = Checker for whether any gems are deleted
@@ -1051,6 +720,8 @@ end_collision:
     
 ##############################################################################
 # Lock current column in place & store it in grid memory
+#   USED IN:
+#
 #   $a0 = Current X coordinate of column (topmost gem)
 #   $a1 = Current Y coordinate of column (topmost gem)
 #   $v1 = Address of current gem (returned by get_grid_value)
@@ -1089,6 +760,8 @@ lock_curr_col:
 
 ##############################################################################
 # Check if the game has ended
+#   USED IN:
+#
 #   $t0 = Holder for end condition values (edge of playable area)
 #   $t1 = Current Y coordinate of column (topmost gem)
 ##############################################################################
@@ -1114,6 +787,8 @@ respawn:
 
 ##############################################################################
 # Check vertical matches: perform scan on any vertical 3-in-a-row gems
+#   USED IN:
+# 
 #   $s0 = Color of current gem
 #   $s1 = Color of second gem (one row down)
 #   $s2 = Color of third gem (two rows down)
@@ -1186,6 +861,7 @@ vertical_next_col:
 
 ##############################################################################
 # Check horizontal matches: perform a horizontal scan on any horizontal 3-in-a-row gems
+#
 #   $s0 = Color of current gem
 #   $s1 = Color of second gem (one row down)
 #   $s2 = Color of third gem (two rows down)
@@ -1260,6 +936,7 @@ horizontal_next_col:
 
 ##############################################################################
 # Check diagonal down left: perform a diagonal down_left scan on any diagonal 3-in-a-row gems
+#
 #   $s0 = Color of current gem
 #   $s1 = Color of second gem (one row down)
 #   $s2 = Color of third gem (two rows down)
@@ -1334,6 +1011,7 @@ down_left_next_col:
     
 ##############################################################################    
 # Check diagonal down right: perform a diagonal down_right scan on any diagonal 3-in-a-row gems
+#
 #   $s0 = Color of current gem
 #   $s1 = Color of second gem (one row down)
 #   $s2 = Color of third gem (two rows down)
