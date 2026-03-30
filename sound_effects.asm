@@ -57,17 +57,8 @@ ADDR_KBRD:
     # Gravity threshold
     gravity_threshold: .word 30
 
-    # Clotho theme song melodies (manually typed using piano sheet music found online)
-    # Format: Pitch, Duration (ms)
-    clotho_melody: 
-        # Bar 1-2
-        .word 69, 64, 72, 64, 71, 64, 69, 64, 68, 64, 71, 64, 69, 64, 67, 64
-        # Bar 3-4
-        .word 67, 62, 71, 62, 69, 62, 67, 62, 66, 62, 67, 62, 69, 62, 67, 62 
-        .word -1 # Loop end marker
-
-    melody_inst:    .word 45            # Pizzicato strings
-    tempo_ms:       .word 200           # Milliseconds between each note (ADJUST FOR SPEED)
+    # Game melodies
+    match_melody: .word 
 
 ##############################################################################
 # Mutable Data - Game State (Memory Variables)
@@ -94,10 +85,6 @@ ADDR_KBRD:
     # 3 = Game Over & Restart
     game_state: .word 2
 
-    # Music variables
-    mel_ptr:        .word 0             # Current note offset
-    last_note_time: .word 0             # Stores system time of last played note
-
 .text
 .globl main
 
@@ -119,9 +106,6 @@ main:
     
 # Create a game loop - updating ~60 times per second
 game_loop:
-    # Loop music
-    jal update_music                    # Update background track
-    
     # Check the keyboard for inputs
     lw $t0, ADDR_KBRD                   # Go to the keyboard address
     lw $t2, 0($t0)                      # Get the first word to check input
@@ -1441,7 +1425,7 @@ drop_loop:
     # Boundary check for reaching playing field bottom
     addi $t2, $s1, 2                    # Y coordinates for the bottom-most gem
     lw $t3, grid_bot                    # Load the bottom of the playing field
-    addi $t3, $t3, -1                   # Move bottom up by 1
+    addi $t3, $t3, -1                    # Move bottom up by 1
     bgt $t2, $t3, collision_final       # The bottom is hit (i.e., gem moves past playable area)
     
     # Collision check for reaching an existing gem
@@ -2184,14 +2168,12 @@ next_row:
     jr $ra
     
 ##############################################################################
-#                                                                            #
 #                               SOUND FUNCTIONS                              #
-#                                                                            #
 ##############################################################################
 ##############################################################################
 # Play sound functions
 #   $v0 = asynchronous/synchronous sound syscall number (31/33, depends on use)
-#   $a0 = pitch
+#   $a0 = pitch (72 = C)
 #   $a1 = sound duration in ms
 #   $a2 = instrument
 #   $a3 = volume
@@ -2209,8 +2191,8 @@ play_drop_sound:
     li $v0, 31
     li $a0, 36                          # Pitch
     li $a1, 200                         # Duration
-    li $a2, 118                         # Instrument
-    li $a3, 90                          # Volume
+    li $a2, 116                         # Instrument
+    li $a3, 70                          # Volume
     syscall
     jr $ra
 
@@ -2220,7 +2202,7 @@ play_shuffle_sound:
     li $t2, 70                          # Starting pitch
 
 shuffle_loop:
-    li $v0, 31                          # Asynchronous MIDI
+    li $v0, 31                          # Synchronous MIDI
     move $a0, $t2                       # Pitch
     li $a1, 50                          # Duration
     li $a2, 115                         # Instrument: Woodblock
@@ -2235,15 +2217,15 @@ shuffle_loop:
 
 play_match_sound:
     li $v0, 33                           # Asynchronous sound syscall
-    li $a0, 84                           # Pitch
-    li $a1, 200                          # Sound duration (300ms)
+    li $a0, 60                           # Pitch
+    li $a1, 150                          # Sound duration (300ms)
     li $a2, 24                           # Instrument
-    li $a3, 100                          # Volume
+    li $a3, 60                           # Volume
     syscall 
     jr $ra
 
 play_game_over_sound:
-    li $v0, 31                          # Asynchronous sound syscall
+    li $v0, 33                          # Synchronous sound syscall
     li $a1, 400                         # Duration
     li $a2, 15                          # Instrument
     li $a3, 80
@@ -2254,66 +2236,4 @@ play_game_over_sound:
     syscall
     li $a0, 33                          # Note 3
     syscall
-    jr $ra
-    
-##############################################################################
-# Update music: Time-based music player (does NOT depend on keyboard inputs!)
-#   $v0 = current system time (ms)
-#   $t1 = last note time
-#   $t2 = difference between current and last time
-#   $t3 = tempo/melody pointer
-#   $t4 = melody line
-#   $a0 = timestamp for last note
-#   $a1 = sound duration
-#   $a2 = instrument
-#   $a3 = volume
-##############################################################################
-update_music:
-    addi $sp, $sp, -4
-    sw $ra, 0($sp)
-
-    li $v0, 30                          # Get current system time (milliseconds), use syscall 30
-    syscall                             # $a0 = low-order 32 bits of system time
-    
-    # Check if enough time has passed
-    lw $t1, last_note_time              # Load the time the last note was triggered
-    sub $t2, $a0, $t1                   # Difference = current time - last time
-    
-    lw $t3, tempo_ms                    # Load target tempo
-    blt $t2, $t3, end_music             # If difference < dempo, exit
-    
-    sw $a0, last_note_time              # Update timestamp for next note
-
-    # Process Melody
-    lw $t3, mel_ptr                     # Load melody pointer
-    la $t4, clotho_melody               # Load in melody line
-    addu $t4, $t4, $t3                  # Calculate address of current note
-    lw $a0, 0($t4)                      # Load pitch
-    
-    # Check for Seamless Loop (-1)
-    li $t5, -1
-    bne $a0, $t5, play_note             # Play note if not end (-1)
-    
-    # Reset loop
-    sw $zero, mel_ptr                   # Reset pointer to 0
-    move $t3, $zero
-    la $t4, clotho_melody               # Load in melody
-    lw $a0, 0($t4)                      # Load the first note immediately (avoid gap between last and first note)
-
-play_note:
-    beq $a0, $zero, skip_midi           # Skip if the pitch is a rest (0)
-    
-    li $v0, 31                          # Asynchronous sound (does not pause game)
-    li $a1, 190                         # Sound duration
-    lw $a2, melody_inst                 # Instrument
-    li $a3, 30                          # Volume (lower than game sound effects)
-    syscall
-
-skip_midi:
-    addi $t3, $t3, 4
-    sw $t3, mel_ptr
-
-end_music:
-    lw $ra, 0($sp)
-    addi $sp, $sp, 4
     jr $ra

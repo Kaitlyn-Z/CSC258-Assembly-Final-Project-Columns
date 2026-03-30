@@ -25,7 +25,7 @@
 # The address of the keyboard. Don't forget to connect it!
 ADDR_KBRD:
     .word 0xffff0000
-
+    
     # Palette Array for Random Selection
     palette: .word 0xf56527, 0xffd72b, 0xcff5a4, 0x61e5fa, 0x8365f0, 0xfcadff
     grid_color: .word 0x808080    # Gray for boundaries
@@ -43,31 +43,19 @@ ADDR_KBRD:
     grid_height:   .word 20             # Playable height (excluding walls)
     grid_full_wid: .word 13             # Playable width + 2
     grid_full_hei: .word 22             # Playable height + 2
-
+    
     # Parameters calculated for drawing playing field
     grid_left: .word 4                  # Same as x_offset
     grid_right: .word 16                # (left + width + 1) 
     grid_top: .word 4                   # Same as y_offset
     grid_bot: .word 25                  # (top + height + 1)
-
+    
     # Parameters for current/next column diplay OUTSIDE of playing field
     display_x: .word 20                 # grid_right + 4
     display_y: .word 10     
     
     # Gravity threshold
     gravity_threshold: .word 30
-
-    # Clotho theme song melodies (manually typed using piano sheet music found online)
-    # Format: Pitch, Duration (ms)
-    clotho_melody: 
-        # Bar 1-2
-        .word 69, 64, 72, 64, 71, 64, 69, 64, 68, 64, 71, 64, 69, 64, 67, 64
-        # Bar 3-4
-        .word 67, 62, 71, 62, 69, 62, 67, 62, 66, 62, 67, 62, 69, 62, 67, 62 
-        .word -1 # Loop end marker
-
-    melody_inst:    .word 45            # Pizzicato strings
-    tempo_ms:       .word 200           # Milliseconds between each note (ADJUST FOR SPEED)
 
 ##############################################################################
 # Mutable Data - Game State (Memory Variables)
@@ -91,12 +79,8 @@ ADDR_KBRD:
     # 0 = Playing
     # 1 = Paused
     # 2 = Main Menu
-    # 3 = Game Over & Restart
+    # TODO: 3 = Game Over
     game_state: .word 2
-
-    # Music variables
-    mel_ptr:        .word 0             # Current note offset
-    last_note_time: .word 0             # Stores system time of last played note
 
 .text
 .globl main
@@ -119,27 +103,12 @@ main:
     
 # Create a game loop - updating ~60 times per second
 game_loop:
-    # Loop music
-    jal update_music                    # Update background track
-    
     # Check the keyboard for inputs
     lw $t0, ADDR_KBRD                   # Go to the keyboard address
     lw $t2, 0($t0)                      # Get the first word to check input
     
-    # Check if state is in game over state (state = 3)
+    # Check if state is in main menu (game state = 2)
     lw $t3, game_state                  # Load current game state
-    li $t4, 3
-    bne $t3, $t4, check_menu_state      # Check if in main menu, etc.
-    
-    # Runs if game is in game over state
-    beq $t2, $zero, skip_input          # If no key pressed, skip and loop
-    lw $t2, 4($t0)                      # Read key
-    beq $t2, 0x72, restart_game         # If the key is "R", restart the game
-    beq $t2, 0x71, quit_game            # If the key is "Q", quit the game
-    j skip_input
-
-# Check if in main menu
-check_menu_state:
     li $t4, 2
     bne $t3, $t4, check_play_pause      # If not in main menu, play normally
 
@@ -149,7 +118,6 @@ check_menu_state:
     beq $t2, 0x20, start_from_menu      # If space is pressed, start game
     j skip_input
 
-# Handles key presses if in playing or paused state
 check_play_pause:
     # No key pressed
     beq $t2, $zero, handle_gravity      # If no key pressed, drop column down (if not paused)
@@ -169,6 +137,7 @@ check_play_pause:
     beq $t2, 0x73, drop_at_once         # If the key is "S", drop the column all the way down
     beq $t2, 0x71, quit_game            # If the key is "Q", quit game
     
+# TODO: Edit eventually to take in different difficulty modes
 handle_gravity:    
     # Check if game state is 1 (paused)
     lw $t3, game_state                  # Load game state
@@ -206,34 +175,8 @@ quit_game:
     syscall
 
 ##############################################################################
-# Start from menu: Transitions from Menu to Playing
-##############################################################################
-start_from_menu:
-    sw $zero, game_state                # Update state to 0 (playing)
-    
-    jal clear_screen                    # Clear menu text
-    
-    # Initialize game board
-    jal draw_playing_field
-    jal generate_col                    # Create first set of gems
-    
-    # Draw initial gems
-    lw $a0, curr_col_x
-    lw $a1, curr_col_y
-    la $t1, gem1_color
-    jal draw_curr_col
-    
-    # Reset gravity so it doesn't drop immediately
-    sw $zero, gravity_counter
-    
-    j handle_gravity                    # Skip first keyboard check
-
-##############################################################################
-# Toggle Pause: Handles switching between playing and paused (includes resume game)
-#   $t0 = current state
-#   $a0 = x coordinate
-#   $a1 = y coordinate
-#   $t1 = gem colours
+# Toggle Pause: Handles switching between playing and paused
+#   $t0 - current state
 ##############################################################################
 toggle_pause:
     addi $sp, $sp, -4                   # Move stack pointer
@@ -268,12 +211,6 @@ end_toggle:
     lw $ra, 0($sp)                      # Get ra from stack
     addi $sp, $sp, 4                    # Move stack pointer
     jr $ra                              # Return
-
-##############################################################################
-#                                                                            #
-#                          DRAWING-RELATED CODE                              #
-#                                                                            #
-##############################################################################
 
 ##############################################################################
 # Drawing the playing field
@@ -351,30 +288,59 @@ draw_main_menu:
     li $s1, 14                          # Y Start (Middle of screen)
 
     # Draw "START"
-    move $a0, $s0                       # S
+    # Draw S
+    move $a0, $s0
     move $a1, $s1
     jal draw_letter_S
     
-    addi $a0, $s0, 4                    # T
+    # Draw T
+    addi $a0, $s0, 4
     move $a1, $s1
     jal draw_letter_T
     
-    addi $a0, $s0, 8                    # A
+    # Draw A
+    addi $a0, $s0, 8
     move $a1, $s1
     jal draw_letter_A
     
-    addi $a0, $s0, 12                   # R
+    # Draw R
+    addi $a0, $s0, 12
     move $a1, $s1
     jal draw_letter_R
-
-    addi $a0, $s0, 16                   # T
+    
+    # Draw T
+    addi $a0, $s0, 16
     move $a1, $s1
     jal draw_letter_T
 
+    # Return
     lw $ra, 0($sp)
     addi $sp, $sp, 4
     jr $ra
 
+##############################################################################
+# Start from menu: Transitions from Menu to Playing
+##############################################################################
+start_from_menu:
+    sw $zero, game_state                # Update state to 0 (playing)
+    
+    jal clear_screen                    # Clear menu text
+    
+    # Initialize game board
+    jal draw_playing_field
+    jal generate_col                    # Create first set of gems
+    
+    # Draw initial gems
+    lw $a0, curr_col_x
+    lw $a1, curr_col_y
+    la $t1, gem1_color
+    jal draw_curr_col
+    
+    # Reset gravity so it doesn't drop immediately
+    sw $zero, gravity_counter
+    
+    j handle_gravity                    # Skip first keyboard check
+    
 ##############################################################################
 # Draw pause menu: Paints the rectangle and text
 #   $a0 = X Coordinate
@@ -401,172 +367,74 @@ draw_box_loop:
     addi $t5, $t5, -1
     bgtz $t5, draw_box_loop
 
+    # Set Text Anchor
     lw $a2, text_color
     li $s0, 5                           # Fixed X starting point (top left)
-    li $s1, 13                          # Fixed Y for all letters
+    li $s1, 13                          # Fixed Y anchor for all letters
     
-    # "PAUSED"
-    move $a0, $s0                       # P
-    move $a1, $s1
+    # P
+    move $a0, $s0
+    move $a1, $s1                       # Reset Y to anchor
     jal draw_letter_P
     
-    addi $a0, $s0, 4                    # A
-    move $a1, $s1   
+    # A
+    addi $a0, $s0, 4                    # Offset X
+    move $a1, $s1                       # Reset Y to anchor
     jal draw_letter_A
     
-    addi $a0, $s0, 8                    # U
-    move $a1, $s1                       
+    # U
+    addi $a0, $s0, 8                    # Offset X
+    move $a1, $s1                       # Reset Y to anchor
     jal draw_letter_U
     
-    addi $a0, $s0, 12                   # S
-    move $a1, $s1                       
+    # S
+    addi $a0, $s0, 12                   # Offset X
+    move $a1, $s1                       # Reset Y to anchor
     jal draw_letter_S
     
-    addi $a0, $s0, 16                   # E
-    move $a1, $s1
+    # E
+    addi $a0, $s0, 16                   # Offset X
+    move $a1, $s1                       # Reset Y to anchor
     jal draw_letter_E
     
-    addi $a0, $s0, 20                   # D
-    move $a1, $s1
+    # D
+    addi $a0, $s0, 20                   # Offset X
+    move $a1, $s1                       # Reset Y to anchor
     jal draw_letter_D
 
     lw $ra, 0($sp)
     addi $sp, $sp, 4
     jr $ra
-   
+    
 ##############################################################################
-# Draw game over menu: Paints the rectangle and text
-#   $a0 = x coordinate of top left corner of box
-#   $a1 = y coordinate of top left corner of box
-#   $a2 = text/text box color (grey/white)
-#   $a3 = width
-#   $a5 = height counter
-##############################################################################   
-draw_game_over_menu:
-    addi $sp, $sp, -4                   # Move stack pointer
-    sw $ra, 0($sp)                      # Save ra
-
-    # Draw grey background box
-    lw $a2, text_box_color              # Initialize rectangular box color
-    li $a0, 3                           # X coord. of top left corner
-    li $a1, 5                           # Y coord. of top left corner
-    li $a3, 26                          # Width
-    li $t5, 24                          # Height
-
-game_over_box_loop:
-    jal draw_hor_line
-    addi $a1, $a1, 1
-    addi $a0, $a0, -26                  # Reset x
-    addi $t5, $t5, -1                   # Decrement height counter
-    bgtz $t5, game_over_box_loop
-
-    lw $a2, text_color                  # Initialize text color
-    li $s0, 6                           # Starting X offset for top left corner of "G"
-    li $s1, 9                           # Starting Y offset for top left corner of "G"
-    
-    # "GAME"
-    move $a0, $s0                       # G
-    move $a1, $s1
-    jal draw_letter_G
-    
-    addi $a0, $s0, 6                    # A
-    move $a1, $s1
-    jal draw_letter_A
-    
-    addi $a0, $s0, 10                   # M
-    move $a1, $s1
-    jal draw_letter_M
-    
-    addi $a0, $s0, 16                   # E
-    move $a1, $s1
-    jal draw_letter_E
-
-    # "OVER"
-    li $s0, 8                           # Starting X offset for top left corner of "O"
-    li $s1, 15                          # Starting Y offset for top left corner of "O"
-
-    move $a0, $s0                       # O
-    move $a1, $s1
-    jal draw_letter_O
-    
-    addi $a0, $s0, 4                    # V
-    move $a1, $s1
-    jal draw_letter_V
-    
-    addi $a0, $s0, 8                    # E
-    move $a1, $s1
-    jal draw_letter_E
-    
-    addi $a0, $s0, 12                   # R
-    move $a1, $s1
-    jal draw_letter_R
-
-    # "(R)(Q)"
-    li $s0, 5                           # Starting X offset for top left corner of "("
-    li $s1, 21                          # Starting Y offset for top left corner of "("
-    
-    move $a0, $s0                       # (
-    move $a1, $s1
-    jal draw_parenthesis_left
-    
-    addi $a0, $s0, 3                    # R
-    move $a1, $s1
-    jal draw_letter_R
-    
-    addi $a0, $s0, 7                    # )
-    move $a1, $s1
-    jal draw_parenthesis_right
-    
-    addi $a0, $s0, 11                   # (
-    move $a1, $s1
-    jal draw_parenthesis_left
-    
-    addi $a0, $s0, 14                   # Q
-    move $a1, $s1
-    jal draw_letter_Q
-    
-    addi $a0, $s0, 20                   # )
-    move $a1, $s1
-    jal draw_parenthesis_right
-    
-    lw $ra, 0($sp)
-    addi $sp, $sp, 4
-    jr $ra    
-
-##############################################################################
-# Letter functions (3x5, 5x5 for G, M, Q)
-#   $a0 = Top Left X of letter
-#   $a1 = Top Left Y of letter
+# Letter functions (3x5)
+#   $a0 = Top Left x of letter
+#   $a1 = Top Left y of letter
 #   $a2 = Color
 ##############################################################################
 draw_letter_P:
     addi $sp, $sp, -4
     sw $ra, 0($sp)
-    
-    # Left stem
-    jal draw_pixel                      # Top-left stem (0, 0)
-    addi $a1, $a1, 1                    # (0, -1)
+    jal draw_pixel                      # Top-left stem
+    addi $a1, $a1, 1
     jal draw_pixel
-    addi $a1, $a1, 1                    # (0, -2)
+    addi $a1, $a1, 1
+    jal draw_pixel                      # Middle-left
+    addi $a1, $a1, 1
     jal draw_pixel
-    addi $a1, $a1, 1                    # (0, -3)
-    jal draw_pixel
-    addi $a1, $a1, 1                    # (0, -4)
-    jal draw_pixel
-    
-    # Loop
-    addi $a1, $a1, -4                   # Back to top (0, 0)
-    addi $a0, $a0, 1                    # (1, 0)
-    jal draw_pixel
-    addi $a0, $a0, 1                    # (2, 0)
-    jal draw_pixel
-    addi $a1, $a1, 1                    # (2, -1)
-    jal draw_pixel
-    addi $a1, $a1, 1                    # (2, -2)
-    jal draw_pixel
-    addi $a0, $a0, -1                   # (1, -2)
-    jal draw_pixel
-    
+    addi $a1, $a1, 1
+    jal draw_pixel                      # Bottom-left stem
+    addi $a1, $a1, -4                   # Back to top
+    addi $a0, $a0, 1
+    jal draw_pixel                      # Top-middle
+    addi $a0, $a0, 1
+    jal draw_pixel                      # Top-right
+    addi $a1, $a1, 1
+    jal draw_pixel                      # Right side of loop
+    addi $a1, $a1, 1
+    jal draw_pixel                      # Bottom-right of loop
+    addi $a0, $a0, -1
+    jal draw_pixel                      # Bottom-middle of loop (at Y+2)
     lw $ra, 0($sp)
     addi $sp, $sp, 4
     jr $ra
@@ -574,42 +442,37 @@ draw_letter_P:
 draw_letter_A:
     addi $sp, $sp, -4
     sw $ra, 0($sp)
-    
-    addi $a1, $a1, 1                    # (0, -1), skip (0, 0)
+    addi $a1, $a1, 1                    # Skip top-left corner for slanted look
     jal draw_pixel
-    addi $a1, $a1, 1                    # (0, -2)
+    addi $a1, $a1, 1
+    jal draw_pixel                      # Left middle
+    addi $a1, $a1, 1
     jal draw_pixel
-    addi $a1, $a1, 1                    # (0, -3)
-    jal draw_pixel
-    addi $a1, $a1, 1                    # (0, -4)
-    jal draw_pixel
-    
+    addi $a1, $a1, 1
+    jal draw_pixel                      # Left bottom
     addi $a1, $a1, -4                   # Back to top row
-    addi $a0, $a0, 1                    # (1, 0)
-    jal draw_pixel
-    addi $a1, $a1, 2                    # (1, -2)
+    addi $a0, $a0, 1
+    jal draw_pixel                      # Top middle cap
+    addi $a1, $a1, 2
     jal draw_pixel                      # Middle bar
-    addi $a1, $a1, -2                   # Back to top row
-    addi $a0, $a0, 1                    # (2, 0), skip draw
-    addi $a1, $a1, 1                    # (2, -1)
-    jal draw_pixel                      
-    addi $a1, $a1, 1                    # (2, -2)
+    addi $a1, $a1, -2
+    addi $a0, $a0, 1
+    addi $a1, $a1, 1
+    jal draw_pixel                      # Right stem starts
+    addi $a1, $a1, 1
     jal draw_pixel
-    addi $a1, $a1, 1                    # (2, -3)
+    addi $a1, $a1, 1
     jal draw_pixel
-    addi $a1, $a1, 1                    # (2, -4)
-    jal draw_pixel
-    
+    addi $a1, $a1, 1
+    jal draw_pixel                      # Right stem bottom
     lw $ra, 0($sp)
     addi $sp, $sp, 4
     jr $ra
 
-# Too lazy to annotate
 draw_letter_U:
     addi $sp, $sp, -4
     sw $ra, 0($sp)
-    
-    jal draw_pixel
+    jal draw_pixel                      # Left Stem
     addi $a1, $a1, 1
     jal draw_pixel
     addi $a1, $a1, 1
@@ -617,20 +480,19 @@ draw_letter_U:
     addi $a1, $a1, 1
     jal draw_pixel
     addi $a1, $a1, 1
-    jal draw_pixel
+    jal draw_pixel                      # Bottom Left Corner
     addi $a0, $a0, 1
-    jal draw_pixel
+    jal draw_pixel                      # Bottom Middle
     addi $a0, $a0, 1
-    jal draw_pixel
+    jal draw_pixel                      # Bottom Right Corner
+    addi $a1, $a1, -1
+    jal draw_pixel                      # Right Stem
     addi $a1, $a1, -1
     jal draw_pixel
     addi $a1, $a1, -1
     jal draw_pixel
     addi $a1, $a1, -1
     jal draw_pixel
-    addi $a1, $a1, -1
-    jal draw_pixel
-    
     lw $ra, 0($sp)
     addi $sp, $sp, 4
     jr $ra
@@ -638,30 +500,28 @@ draw_letter_U:
 draw_letter_S:
     addi $sp, $sp, -4
     sw $ra, 0($sp)
-    
     addi $a0, $a0, 1
-    jal draw_pixel
+    jal draw_pixel                      # Top row
     addi $a0, $a0, 1
     jal draw_pixel
     addi $a0, $a0, -2
-    jal draw_pixel
+    jal draw_pixel                      # Top-left pixel
     addi $a1, $a1, 1
     jal draw_pixel
     addi $a1, $a1, 1
     jal draw_pixel
     addi $a0, $a0, 1
-    jal draw_pixel
+    jal draw_pixel                      # Middle pixel
     addi $a0, $a0, 1
-    jal draw_pixel
+    jal draw_pixel                      # Middle-right
     addi $a1, $a1, 1
-    jal draw_pixel
+    jal draw_pixel                      # Bottom-right stem
     addi $a1, $a1, 1
     jal draw_pixel
     addi $a0, $a0, -1
-    jal draw_pixel
+    jal draw_pixel                      # Bottom row
     addi $a0, $a0, -1
     jal draw_pixel
-    
     lw $ra, 0($sp)
     addi $sp, $sp, 4
     jr $ra
@@ -669,8 +529,7 @@ draw_letter_S:
 draw_letter_E:
     addi $sp, $sp, -4
     sw $ra, 0($sp)
-    
-    jal draw_pixel
+    jal draw_pixel                      # Stem
     addi $a1, $a1, 1
     jal draw_pixel
     addi $a1, $a1, 1
@@ -679,22 +538,18 @@ draw_letter_E:
     jal draw_pixel
     addi $a1, $a1, 1
     jal draw_pixel
-    
-    addi $a1, $a1, -4                 
+    addi $a1, $a1, -4                   # Top Bar
     addi $a0, $a0, 1
     jal draw_pixel
     addi $a0, $a0, 1
     jal draw_pixel
-    
-    addi $a0, $a0, -1                  
+    addi $a0, $a0, -1                   # Middle Bar
     addi $a1, $a1, 2
     jal draw_pixel
-    
-    addi $a1, $a1, 2                    
+    addi $a1, $a1, 2                    # Bottom Bar
     jal draw_pixel
     addi $a0, $a0, 1
     jal draw_pixel
-    
     lw $ra, 0($sp)
     addi $sp, $sp, 4
     jr $ra
@@ -702,8 +557,7 @@ draw_letter_E:
 draw_letter_D:
     addi $sp, $sp, -4
     sw $ra, 0($sp)
-    
-    jal draw_pixel                  
+    jal draw_pixel                      # Full Left Stem
     addi $a1, $a1, 1
     jal draw_pixel
     addi $a1, $a1, 1
@@ -712,22 +566,18 @@ draw_letter_D:
     jal draw_pixel
     addi $a1, $a1, 1
     jal draw_pixel
-    
-    addi $a1, $a1, -4                  
+    addi $a1, $a1, -4                   # Top part
     addi $a0, $a0, 1
     jal draw_pixel
-    
-    addi $a1, $a1, 4                
+    addi $a1, $a1, 4                    # Bottom part
     jal draw_pixel
-    
-    addi $a0, $a0, 1
+    addi $a0, $a0, 1                    # Right Stem (Middle section)
     addi $a1, $a1, -1
     jal draw_pixel
     addi $a1, $a1, -1
     jal draw_pixel
     addi $a1, $a1, -1
     jal draw_pixel
-    
     lw $ra, 0($sp)
     addi $sp, $sp, 4
     jr $ra
@@ -735,12 +585,12 @@ draw_letter_D:
 draw_letter_T:
     addi $sp, $sp, -4
     sw $ra, 0($sp)
-    jal draw_pixel                     
+    jal draw_pixel                      # Top-left
     addi $a0, $a0, 1
-    jal draw_pixel                     
+    jal draw_pixel                      # Top-middle
     addi $a0, $a0, 1
-    jal draw_pixel                    
-    addi $a0, $a0, -1             
+    jal draw_pixel                      # Top-right
+    addi $a0, $a0, -1                   # Move to center stem
     addi $a1, $a1, 1
     jal draw_pixel
     addi $a1, $a1, 1
@@ -758,321 +608,47 @@ draw_letter_R:
     sw $ra, 8($sp)
     sw $s0, 4($sp)                      # Save original X
     sw $s1, 0($sp)                      # Save original Y
-    
-    move $s0, $a0                    
-    move $s1, $a1                      
-    
-    jal draw_pixel                   
+    move $s0, $a0                       # Keep track of anchor X
+    move $s1, $a1                       # Keep track of anchor Y
+    jal draw_pixel                      # Left vertical stem
     addi $a1, $a1, 1
     jal draw_pixel
     addi $a1, $a1, 1
-    jal draw_pixel                      
+    jal draw_pixel                      # Middle point
     addi $a1, $a1, 1
     jal draw_pixel
     addi $a1, $a1, 1
-    jal draw_pixel
+    jal draw_pixel                      # Bottom left
+    move $a0, $s0                       # Reset to Left, draw top and middle horizontal bars
+    move $a1, $s1                       # Reset to Top
+    addi $a0, $a0, 1                    # Move to X+1
+    jal draw_pixel                      # Top-mid (1,0)
+    addi $a1, $a1, 2                    # Move to Y+2
+    jal draw_pixel                      # Mid-mid (1,2)
     move $a0, $s0
     move $a1, $s1
-    addi $a0, $a0, 1                    
-    jal draw_pixel                      
-    addi $a1, $a1, 2                    
-    jal draw_pixel                      
-    move $a0, $s0
-    move $a1, $s1
-    addi $a0, $a0, 2                    
-    jal draw_pixel                      
+    addi $a0, $a0, 2                    # Move to X+2 (Right edge)
+    jal draw_pixel                      # Top-right (2,0)
     addi $a1, $a1, 1
-    jal draw_pixel                      
+    jal draw_pixel                      # Mid-right (2,1)
     addi $a1, $a1, 1
-    jal draw_pixel                      
+    jal draw_pixel                      # Loop-bottom-right (2,2)
     move $a0, $s0
     move $a1, $s1
     addi $a0, $a0, 1        
     addi $a1, $a1, 3        
-    jal draw_pixel
+    jal draw_pixel                      # Leg part 1
     addi $a0, $a0, 1        
     addi $a1, $a1, 1        
-    jal draw_pixel
+    jal draw_pixel                      # Leg part 2 (Bottom-right corner)
 
+    # Restore and Return
     lw $s1, 0($sp)
     lw $s0, 4($sp)
     lw $ra, 8($sp)
     addi $sp, $sp, 12
     jr $ra
 
-draw_letter_G:
-    addi $sp, $sp, -12
-    sw $ra, 8($sp)
-    sw $s0, 4($sp)                      # Save original X
-    sw $s1, 0($sp)                      # Save original Y
-    
-    move $s0, $a0                
-    move $s1, $a1                    
-
-    addi $a0, $s0, 1                    # (1, 0) skip (0, 0)
-    jal draw_pixel         
-    addi $a0, $a0, 1                    # (2, 0)
-    jal draw_pixel                  
-    addi $a0, $a0, 1                    # (3, 0)
-    jal draw_pixel           
-
-    move $a0, $s0                       # (0, 0)   
-    addi $a1, $s1, 1                    # (0, -1)
-    jal draw_pixel
-    addi $a1, $a1, 1                    # (0, -2)
-    jal draw_pixel
-    addi $a1, $a1, 1                    # (0, -3)
-    jal draw_pixel
-    
-    addi $a1, $a1, 1                    # (0, -4)
-    addi $a0, $s0, 1                    # (1, -4)
-    jal draw_pixel
-    addi $a0, $a0, 1                    # (2, -4)
-    jal draw_pixel
-    addi $a0, $a0, 1                    # (3, -4)
-    jal draw_pixel
-    addi $a0, $a0, 1                    # (4, -4)
-    jal draw_pixel
-    
-    move $a0, $s0                       # (0, -4)
-    move $a1, $s1                       # (0, 0)
-    addi $a0, $a0, 4                    # (4, 0)
-    addi $a1, $a1, 4                    # (4, -4)
-    jal draw_pixel
-    addi $a1, $a1, -1                   # (4, -3)
-    jal draw_pixel
-    addi $a1, $a1, -1                   # (4, -2)
-    jal draw_pixel
-    
-    addi $a0, $a0, -1                   # (3, -2)
-    jal draw_pixel     
-    addi $a0, $a0, -1                   # (2, -2)
-    jal draw_pixel     
-
-    lw $s1, 0($sp)
-    lw $s0, 4($sp)
-    lw $ra, 8($sp)
-    addi $sp, $sp, 12
-    jr $ra
-    
-draw_letter_M:
-    addi $sp, $sp, -4
-    sw $ra, 0($sp)
-    
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    
-    addi $a1, $a1, -4
-    addi $a0, $a0, 1
-    jal draw_pixel                      
-    addi $a0, $a0, 1
-    jal draw_pixel                      
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    
-    addi $a1, $a1, -4
-    addi $a0, $a0, 1
-    jal draw_pixel
-    addi $a0, $a0, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    
-    lw $ra, 0($sp)
-    addi $sp, $sp, 4
-    jr $ra
-
-draw_letter_O:
-    addi $sp, $sp, -4
-    sw $ra, 0($sp)
-    
-    jal draw_pixel                    
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, -4
-    addi $a0, $a0, 1
-    jal draw_pixel            
-    addi $a1, $a1, 4
-    jal draw_pixel                   
-    addi $a0, $a0, 1
-    addi $a1, $a1, -4
-    jal draw_pixel                 
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    
-    lw $ra, 0($sp)
-    addi $sp, $sp, 4
-    jr $ra
-
-draw_letter_V:
-    addi $sp, $sp, -4
-    sw $ra, 0($sp)
-    
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel                      
-    addi $a1, $a1, 1
-    addi $a0, $a0, 1
-    jal draw_pixel                      
-    addi $a1, $a1, -1
-    addi $a0, $a0, 1
-    jal draw_pixel                      
-    addi $a1, $a1, -1
-    jal draw_pixel
-    addi $a1, $a1, -1
-    jal draw_pixel
-    addi $a1, $a1, -1
-    jal draw_pixel
-    
-    lw $ra, 0($sp)
-    addi $sp, $sp, 4
-    jr $ra
-
-draw_letter_Q:
-    addi $sp, $sp, -12
-    sw $ra, 8($sp)
-    sw $s0, 4($sp)
-    sw $s1, 0($sp)
-    
-    move $s0, $a0           
-    move $s1, $a1           
-
-    addi $a0, $s0, 1    
-    jal draw_pixel          
-    addi $a1, $s1, 4
-    jal draw_pixel          
-    addi $a0, $s0, 2
-    move $a1, $s1
-    jal draw_pixel  
-    addi $a1, $s1, 4
-    jal draw_pixel
-    addi $a0, $s0, 3
-    move $a1, $s1
-    jal draw_pixel
-
-    move $a0, $s0
-    addi $a1, $s1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-
-    addi $a0, $s0, 4
-    move $a1, $s1
-    addi $a1, $a1, 1
-    jal draw_pixel  
-    addi $a1, $a1, 1
-    jal draw_pixel
-    addi $a1, $a1, 1
-    jal draw_pixel
-
-    addi $a0, $s0, 3
-    addi $a1, $s1, 3
-    jal draw_pixel          
-    addi $a0, $s0, 4
-    addi $a1, $s1, 4
-    jal draw_pixel
-
-    lw $s1, 0($sp)
-    lw $s0, 4($sp)
-    lw $ra, 8($sp)
-    addi $sp, $sp, 12
-    jr $ra
-    
-draw_parenthesis_left:
-    addi $sp, $sp, -12
-    sw $ra, 8($sp)
-    sw $s0, 4($sp)
-    sw $s1, 0($sp)
-    
-    move $s0, $a0
-    move $s1, $a1
-
-    addi $a0, $s0, 1  
-    move $a1, $s1           
-    jal draw_pixel
-    addi $a1, $s1, 4        
-    jal draw_pixel
-
-    move $a0, $s0           
-    addi $a1, $s1, 1       
-    jal draw_pixel
-    addi $a1, $a1, 1       
-    jal draw_pixel
-    addi $a1, $a1, 1       
-    jal draw_pixel
-
-    lw $s1, 0($sp)
-    lw $s0, 4($sp)
-    lw $ra, 8($sp)
-    addi $sp, $sp, 12
-    jr $ra
-    
-draw_parenthesis_right:
-    addi $sp, $sp, -12
-    sw $ra, 8($sp)
-    sw $s0, 4($sp)
-    sw $s1, 0($sp)
-    
-    move $s0, $a0
-    move $s1, $a1
-
-    move $a0, $s0           
-    move $a1, $s1           
-    jal draw_pixel
-    addi $a1, $s1, 4       
-    jal draw_pixel
-
-    addi $a0, $s0, 1        
-    addi $a1, $s1, 1        
-    jal draw_pixel
-    addi $a1, $a1, 1        
-    jal draw_pixel
-    addi $a1, $a1, 1        
-    jal draw_pixel
-
-    lw $s1, 0($sp)
-    lw $s0, 4($sp)
-    lw $ra, 8($sp)
-    addi $sp, $sp, 12
-    jr $ra
-    
 ##############################################################################
 # Drawing a horizontal line
 #   $a0 = The X coordinate of the start of the line
@@ -1227,15 +803,15 @@ end_draw_curr_col_loop:
 
 ##############################################################################
 # Redraw Grid Contents: Restores the board after the menu disappears
-#   $s0 = X counter
-#   $s1 = Y counter
-#   $v0 = Color returned from memory
+#   $s0 - X counter
+#   $s1 - Y counter
+#   $v0 - Color returned from memory
 ##############################################################################
 redraw_grid_contents:
-    addi $sp, $sp, -12                  # Move stack pointer
-    sw $ra, 8($sp)                      # Store ra
-    sw $s0, 4($sp)                      # Store x
-    sw $s1, 0($sp)                      # Store y
+    addi $sp, $sp, -12                  # Move stack pointer, store x, y, and ra
+    sw $ra, 8($sp)
+    sw $s0, 4($sp)
+    sw $s1, 0($sp)
 
     li $s1, 0                           # Initialize y counter
     
@@ -1243,7 +819,7 @@ row_redraw:
     li $s0, 0                           # Initialize x counter
     
 col_redraw:
-    # Convert grid index to bitmap coordinates
+    # Convert grid index to bitmap coords (X+5, Y+5 for offsets)
     addi $a0, $s0, 5                
     addi $a1, $s1, 5
     jal get_grid_value                  # Check grid memory
@@ -1253,25 +829,19 @@ col_redraw:
 
 skip_redraw_pixel:
     addi $s0, $s0, 1                    # Increment x counter
-    li $t7, 11                          # Grid width
+    li $t7, 11                          # grid_width
     blt $s0, $t7, col_redraw            # Check if you're at the end of the row
     
     addi $s1, $s1, 1                    # Increment y counter
-    li $t7, 20                          # Grid height
+    li $t7, 20                          # grid_height
     blt $s1, $t7, row_redraw
 
-    # Restore values from stack
     lw $s1, 0($sp)
     lw $s0, 4($sp)
     lw $ra, 8($sp)
     addi $sp, $sp, 12
     jr $ra    
 
-##############################################################################
-#                                                                            #
-#                      MOVEMENT, COLLISION, MATCHING                         #
-#                                                                            #
-##############################################################################
 ##############################################################################
 # Move down by one pixel (gravity functionality)
 #   $a0 = Current X coordinate of column (topmost gem)
@@ -1367,8 +937,6 @@ move_left:
     la $t1, gem1_color                  # Get the gem palette for normal drawing
     jal draw_curr_col
     
-    jal play_move_sound                 # Play sound when moving
-    
     j game_loop                         # Move back to the game loop for next check
     
 ##############################################################################
@@ -1413,8 +981,6 @@ move_right:
     la $t1, gem1_color                  # Get the gem palette for normal drawing
     jal draw_curr_col
     
-    jal play_move_sound                 # Play sound when moving
-    
     j game_loop                         # Move back to the game loop for next check
 
 ##############################################################################
@@ -1432,8 +998,6 @@ move_right:
 drop_at_once:
     lw $s0, curr_col_x                  # Initialize mutable coordinates for checking
     lw $s1, curr_col_y                  # Y coordinate is responsible for checking "bottom"    
-    
-    jal play_drop_sound                 # Play quick thud when blocks drop
 
 drop_loop:
     addi $s1, $s1, 1                    # Move Y checker down by 1
@@ -1441,7 +1005,7 @@ drop_loop:
     # Boundary check for reaching playing field bottom
     addi $t2, $s1, 2                    # Y coordinates for the bottom-most gem
     lw $t3, grid_bot                    # Load the bottom of the playing field
-    addi $t3, $t3, -1                   # Move bottom up by 1
+    addi $t3, $t3, -1                    # Move bottom up by 1
     bgt $t2, $t3, collision_final       # The bottom is hit (i.e., gem moves past playable area)
     
     # Collision check for reaching an existing gem
@@ -1500,8 +1064,6 @@ shuffle_col:
     
     # TO BE CHANGED: Redraw the displayed column (on the side) if we decide to display current col
     # IGNORE if display/preview next col (no need to update with shuffle)
-    
-    jal play_shuffle_sound              # Play sound when shuffling
     
     j game_loop                         # Return to the game loop for next input
 
@@ -1666,50 +1228,18 @@ lock_curr_col:
 #   $t0 = Holder for end condition values (edge of playable area)
 #   $t1 = Current Y coordinate of column (topmost gem)
 ##############################################################################
+# !! THIS NEEDS FIXING: RIGHT NOW GAME ENDS BUT WITH OVERLAP!! - FIX WHEN IMPLEMENTING GRAVITY
 check_game_end:
     li $t0, 5                           # Load $t0 with the highest playable area (1 row under ceiling)
     lw $t1, curr_col_y                  # Check the position of current column
-    ble $t1, $t0, trigger_game_over     # If column is higher than playable area, it has reached the ceiling
-    jr $ra
-    
-trigger_game_over:
-    li $t0, 3
-    sw $t0, game_state                  # Switch to Game Over state
-    jal draw_game_over_menu             # Draw game over message
-    
-    jal play_game_over_sound            # Play sound when game over
-    
-    j game_loop                         # Return to loop to wait for 'R' (restart signal)
-
-##############################################################################
-# Restart game: Wipes memory and starts a new game
-##############################################################################
-restart_game:
-    jal reset_grid_memory               # Erase everything in the game grid
-    jal respawn                         # Reset column x and y
-    j start_from_menu                   # Use existing logic to clear screen and draw grid
-
-##############################################################################
-# Reset grid memory: Reset everything in the game grid to 0
-#   $t0 = grid
-#   $t1 = grid value to fill in for reset
-#   $t2 = counter (for number of grid slots to fill)
-##############################################################################
-reset_grid_memory:
-    la $t0, grid                        # Load in grid
-    li $t1, 0                           # Load in grid value
-    li $t2, 220                         # Load in counter
-
-reset_grid_loop:
-    sw $t1, 0($t0)
-    addi $t0, $t0, 4
-    addi $t2, $t2, -1
-    bnez $t2, reset_grid_loop
+    ble $t1, $t0, quit_game             # If column is higher than playable area, it has reached the ceiling
     jr $ra
 
 ##############################################################################
-# Respawn: Restore X and Y coordinates to initial position
-#   $t0 = Current x and y (repurposed)
+# Restore X and Y coordinates to initial position
+#   USED IN:  (to generate new column)
+#
+#   $t0 = Holder for current X/Y coordinates
 ##############################################################################
 respawn:
     li $t0, 10                          # Initial X offset
@@ -1745,7 +1275,7 @@ check_vertical_matches:
 # Loop over the rows of the playing field
 vertical_row_loop:
     li $t9, 0                           # Initialize the column index counter
-
+    
 # Loop through the grid of each row
 vertical_col_loop:
     # Calculate the index of current gem in memory
@@ -1842,7 +1372,7 @@ horizontal_col_loop:
     bne $s0, $s2, horizontal_next_col         # Check the third gem
     
     # If all checks passed: Horizontal 3-in-a-row -> Mark the match_grid for deletion
-    la $t5, match_grid                  # Load the temporary grid
+    la $t5, match_grid                   # Load the temporary grid
     add $t2, $t5, $t1                   # Similarly, get address for current gem
     li $t3, 1                           # Load the marker
     sw $t3, 0($t2)                      # Mark the gems as 1 for deletion afterwards
@@ -1916,7 +1446,7 @@ down_left_col_loop:
     bne $s0, $s2, down_left_next_col         # Check the third gem
     
     # If all checks passed: Diagonal 3-in-a-row -> Mark the match_grid for deletion
-    la $t5, match_grid                  # Load the temporary grid
+    la $t5, match_grid                   # Load the temporary grid
     add $t2, $t5, $t1                   # Similarly, get address for current gem
     li $t3, 1                           # Load the marker
     sw $t3, 0($t2)                      # Mark the gems as 1 for deletion afterwards
@@ -1990,7 +1520,7 @@ down_right_col_loop:
     bne $s0, $s2, down_right_next_col         # Check the third gem
     
     # If all checks passed: Diagonal 3-in-a-row -> Mark the match_grid for deletion
-    la $t5, match_grid                  # Load the temporary grid
+    la $t5, match_grid                   # Load the temporary grid
     add $t2, $t5, $t1                   # Similarly, get address for current gem
     li $t3, 1                           # Load the marker
     sw $t3, 0($t2)                      # Mark the gems as 1 for deletion afterwards
@@ -2013,6 +1543,7 @@ down_right_next_col:
     jr $ra
 
 ##############################################################################
+# MODIFY VARIABLE DOCUMENTATION!
 # Delete matches
 #   $a0 = Current X coordinate of column (topmost gem)
 #   $a1 = Current Y coordinate of column (topmost gem)
@@ -2069,9 +1600,6 @@ del_col_loop:
     la $t7, black_palette               # Load the black palette for deletion
     lw $a2, 0($t7)
     jal draw_pixel                      # Paint the pixel black (delete it)
-    
-    jal play_match_sound                # Play short melody when match successful
-    
     li $v0, 1                           # Update checker - sth has been deleted, look for chain reactions
 
 skip_del:
@@ -2087,7 +1615,6 @@ skip_del:
     lw $s0, 12($sp)
     lw $ra, 16($sp)                     # Restore ra
     addi $sp, $sp, 20
-    
     jr $ra                              # Return
 
 ##############################################################################
@@ -2147,7 +1674,7 @@ row_loop:
     sw $s5, 0($t2)                      # Move color down
     sw $zero, -44($t2)                  # Clear old spot
     li $s4, 1                           # Mark for dropping
-
+    
     # Draw gem at new position
     addi $a0, $s2, 5                    # Reload current coordinates (X, Y) in playing field
     addi $a1, $s3, 5  
@@ -2171,149 +1698,15 @@ next_row:
     blt $s2, $s0, col_loop
     
     # Repeat the scanning process if anything above the gem needs to be dropped as well
-    bne $s4, $zero, collapse_outer_loop # If anything has been moved, repeat loop
+    bne $s4, $zero, collapse_outer_loop     # If anything has been moved, repeat loop
     
-    lw $s5, 0($sp)                      # Pop the variables stored from stack
+    lw $s5, 0($sp)                       # Pop the variables stored from stack
     lw $s4, 4($sp)
     lw $s3, 8($sp)
     lw $s2, 12($sp)
     lw $s1, 16($sp)
     lw $s0, 20($sp)
-    lw $ra, 24($sp)                     # Restore ra
+    lw $ra, 24($sp)                      # Restore ra
     addi $sp, $sp, 28   
     jr $ra
     
-##############################################################################
-#                                                                            #
-#                               SOUND FUNCTIONS                              #
-#                                                                            #
-##############################################################################
-##############################################################################
-# Play sound functions
-#   $v0 = asynchronous/synchronous sound syscall number (31/33, depends on use)
-#   $a0 = pitch
-#   $a1 = sound duration in ms
-#   $a2 = instrument
-#   $a3 = volume
-##############################################################################
-play_move_sound:
-    li $v0, 31                          # Asynchronous sound syscall
-    li $a0, 72                          # Pitch
-    li $a1, 100                         # Sound duration (100ms)
-    li $a2, 12                          # Instrument
-    li $a3, 60                          # Volume
-    syscall 
-    jr $ra
-
-play_drop_sound:
-    li $v0, 31
-    li $a0, 36                          # Pitch
-    li $a1, 200                         # Duration
-    li $a2, 118                         # Instrument
-    li $a3, 90                          # Volume
-    syscall
-    jr $ra
-
-play_shuffle_sound:
-    li $t0, 0                           # Loop counter
-    li $t1, 3                           # Number of "clicks" in the shuffle
-    li $t2, 70                          # Starting pitch
-
-shuffle_loop:
-    li $v0, 31                          # Asynchronous MIDI
-    move $a0, $t2                       # Pitch
-    li $a1, 50                          # Duration
-    li $a2, 115                         # Instrument: Woodblock
-    li $a3, 80                          # Volume
-    syscall
-
-    addi $t2, $t2, -2                   # Decrease pitch slightly
-    addi $t0, $t0, 1                    # Increment counter
-    blt $t0, $t1, shuffle_loop
-
-    jr $ra
-
-play_match_sound:
-    li $v0, 33                           # Asynchronous sound syscall
-    li $a0, 84                           # Pitch
-    li $a1, 200                          # Sound duration (300ms)
-    li $a2, 24                           # Instrument
-    li $a3, 100                          # Volume
-    syscall 
-    jr $ra
-
-play_game_over_sound:
-    li $v0, 31                          # Asynchronous sound syscall
-    li $a1, 400                         # Duration
-    li $a2, 15                          # Instrument
-    li $a3, 80
-    
-    li $a0, 50                          # Note 1
-    syscall
-    li $a0, 45                          # Note 2
-    syscall
-    li $a0, 33                          # Note 3
-    syscall
-    jr $ra
-    
-##############################################################################
-# Update music: Time-based music player (does NOT depend on keyboard inputs!)
-#   $v0 = current system time (ms)
-#   $t1 = last note time
-#   $t2 = difference between current and last time
-#   $t3 = tempo/melody pointer
-#   $t4 = melody line
-#   $a0 = timestamp for last note
-#   $a1 = sound duration
-#   $a2 = instrument
-#   $a3 = volume
-##############################################################################
-update_music:
-    addi $sp, $sp, -4
-    sw $ra, 0($sp)
-
-    li $v0, 30                          # Get current system time (milliseconds), use syscall 30
-    syscall                             # $a0 = low-order 32 bits of system time
-    
-    # Check if enough time has passed
-    lw $t1, last_note_time              # Load the time the last note was triggered
-    sub $t2, $a0, $t1                   # Difference = current time - last time
-    
-    lw $t3, tempo_ms                    # Load target tempo
-    blt $t2, $t3, end_music             # If difference < dempo, exit
-    
-    sw $a0, last_note_time              # Update timestamp for next note
-
-    # Process Melody
-    lw $t3, mel_ptr                     # Load melody pointer
-    la $t4, clotho_melody               # Load in melody line
-    addu $t4, $t4, $t3                  # Calculate address of current note
-    lw $a0, 0($t4)                      # Load pitch
-    
-    # Check for Seamless Loop (-1)
-    li $t5, -1
-    bne $a0, $t5, play_note             # Play note if not end (-1)
-    
-    # Reset loop
-    sw $zero, mel_ptr                   # Reset pointer to 0
-    move $t3, $zero
-    la $t4, clotho_melody               # Load in melody
-    lw $a0, 0($t4)                      # Load the first note immediately (avoid gap between last and first note)
-
-play_note:
-    beq $a0, $zero, skip_midi           # Skip if the pitch is a rest (0)
-    
-    li $v0, 31                          # Asynchronous sound (does not pause game)
-    li $a1, 190                         # Sound duration
-    lw $a2, melody_inst                 # Instrument
-    li $a3, 30                          # Volume (lower than game sound effects)
-    syscall
-
-skip_midi:
-    addi $t3, $t3, 4
-    sw $t3, mel_ptr
-
-end_music:
-    lw $ra, 0($sp)
-    addi $sp, $sp, 4
-    jr $ra
