@@ -214,7 +214,7 @@ start_from_menu:
 
 ##############################################################################
 # Toggle Pause: Handles switching between playing and paused (includes resume game)
-#   $t0 - current state
+#   $t0 = current state
 #   $a0 = x coordinate
 #   $a1 = y coordinate
 #   $t1 = gem colours
@@ -1251,6 +1251,11 @@ skip_redraw_pixel:
     addi $sp, $sp, 12
     jr $ra    
 
+##############################################################################
+#                                                                            #
+#                      MOVEMENT, COLLISION, MATCHING                         #
+#                                                                            #
+##############################################################################
 ##############################################################################
 # Move down by one pixel (gravity functionality)
 #   $a0 = Current X coordinate of column (topmost gem)
