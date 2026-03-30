@@ -28,6 +28,7 @@ ADDR_KBRD:
 
     # Palette Array for Random Selection
     palette: .word 0xf56527, 0xffd72b, 0xcff5a4, 0x61e5fa, 0x8365f0, 0xfcadff
+    preview_palette: .word 0xfffaaf92, 0xffffead4, 0xffe7f9d1, 0xffaff2fc, 0xffc0aaf7, 0xfffdceff
     grid_color: .word 0x808080    # Gray for boundaries
     black_palette: .word 0x000000, 0x000000, 0x000000 # A palette with only black - for repaiting grid cells
     
@@ -77,6 +78,18 @@ ADDR_KBRD:
     gem1_color:  .word 0                # Color of the gems 
     gem2_color:  .word 0
     gem3_color:  .word 0
+    
+    preview_gem1_color: .word 0         # Color of the preview gems (12 bytes away from the actual gem color)
+    preview_gem2_color: .word 0 
+    preview_gem3_color: .word 0
+    
+    next_gem1_color: .word 0            # Color of the next generated column
+    next_gem2_color: .word 0 
+    next_gem3_color: .word 0 
+    
+    next_preview_gem1_color: .word 0    # Color of preview gems for the NEXT piece
+    next_preview_gem2_color: .word 0
+    next_preview_gem3_color: .word 0
 
     # The Grid (220 words for 11x20 field)
     grid: .word 0:220
@@ -213,14 +226,28 @@ start_from_menu:
     
     jal clear_screen                    # Clear menu text
     
-    # Initialize game board
-    jal draw_playing_field
-    jal generate_col                    # Create first set of gems
+    # Initialize everything
+    jal draw_playing_field  # Call the Playing Field function
+    jal generate_col        # Generate current column (not displayed yet)
+    jal generate_col        # Call generate_col twice to initialize both the next and curr column
     
-    # Draw initial gems
-    lw $a0, curr_col_x
+    # Draw the current column within the playing field
+    lw $a0, curr_col_x      # Load coordinates from playing field (middle top)
     lw $a1, curr_col_y
-    la $t1, gem1_color
+    la $t1, gem1_color      # Load the initialized color
+    jal draw_curr_col
+    
+    # Initialize the preview column
+    jal get_landing_y
+    move $a1, $v0          # Set Y to landing spot
+    lw $a0, curr_col_x     # Set X
+    la $t1, preview_gem1_color 
+    jal draw_preview_col      # Draw ghost piece
+    
+    # Call generate_col again to generate the next column
+    lw $a0, display_x              # Load coordinates in display area 
+    lw $a1, display_y
+    la $t1, next_gem1_color             # Load the next column's color
     jal draw_curr_col
     
     # Reset gravity so it doesn't drop immediately
@@ -257,12 +284,25 @@ resume_game:
     # Wipe the menu by redrawing everything
     jal draw_playing_field              # Redraw game board
     jal redraw_grid_contents            # Redraw all landed gems
-    
+
     # Redraw active falling column
     lw $a0, curr_col_x                  # Load in current x
     lw $a1, curr_col_y                  # Load in current y
     la $t1, gem1_color                  # Get gem colors
     jal draw_curr_col                   # Draw
+    
+    # Initialize the preview column
+    jal get_landing_y
+    move $a1, $v0          # Set Y to landing spot
+    lw $a0, curr_col_x     # Set X
+    la $t1, preview_gem1_color 
+    jal draw_preview_col      # Draw ghost piece
+    
+    # Call generate_col again to generate the next column
+    lw $a0, display_x              # Load coordinates in display area 
+    lw $a1, display_y
+    la $t1, next_gem1_color             # Load the next column's color
+    jal draw_curr_col
 
 end_toggle:
     lw $ra, 0($sp)                      # Get ra from stack
@@ -1150,42 +1190,67 @@ draw_pixel:
     
 ##############################################################################
 # Generate a 3-gem column with random colors in memory (no display)
-#   $a0 = Index pointing to a color (random selection)
-#   $t1 = Index counter for number of gems
-#   $t2 = Store memory address of the gems (starting with 1st)
-#   $t3 = Color address for each gem (based on random selection)
-#   $t4 = Storage of actual color
-#   $t5 = Number of gems drawn
+# - $a0 = Index pointing to a color (random selection) & holder of the next column
+# - $t1 = Index counter for number of gems
+# - $t2 = Store memory address of the gems (starting with 1st)
+# - $t3 = Color address for each gem (based on random selection) - both palette & preview palette
+# - $t4 = Storage of actual color and preview color
+# - $t5 = Number of gems
+# - $t6 = Index pointing to the preview gems
 ##############################################################################
 generate_col:
-    addi $sp, $sp, -4                   # Preserve ra
-    sw $ra, 0($sp)                      # Load ra onto the stack
-    li $t1, 0                           # Initialize gem counter
-    li $t5, 3                           # Load the total number of gems (3)
-    la $t2, gem1_color                  # Point to the memory address of the 1st gem
+addi $sp, $sp, -4               # Preserve ra
+sw $ra, 0($sp)                  # Load ra onto the stack
+
+# Move the next column to the current column'
+lw $t0, next_gem1_color
+sw $t0, gem1_color
+lw $t0, next_gem2_color
+sw $t0, gem2_color
+lw $t0, next_gem3_color
+sw $t0, gem3_color
+
+# Move the preview columns of the next piece to the current piece
+lw $t0, next_preview_gem1_color
+sw $t0, preview_gem1_color
+lw $t0, next_preview_gem1_color + 4
+sw $t0, preview_gem2_color
+lw $t0, next_preview_gem1_color + 8
+sw $t0, preview_gem3_color
+
+# Generate the new current column
+li $t1, 0                       # Initialize gem counter
+li $t5, 3                       # Load the total number of gems (3)
+la $t2, next_gem1_color         # Point to the memory address of the NEXT 1st gem
 
 # Loop through 3 gems & generate random colors for each
 generate_col_loop:
-    beq $t1, $t5, end_generate_col_loop # Break loop if all 3 gem colors have been initiated
-    li $v0, 42                          # Random generation
-    li $a0, 0                           # Set range from 0-5 (corresponding to six colors)
-    li $a1, 6
-    syscall                             # Store the random selected index in $a0
-    
-    sll $a0, $a0, 2                     # Get color's address in memory (index * 4 bytes)
-    la $t3, palette                     # Point to the start of the palette
-    addu $t3, $t3, $a0                  # Based on the address, get the corresponding color
-    lw $t4, 0($t3)                      # Load the value of the color
-    sw $t4, 0($t2)                      # Store the color in the memory (gem_color_i)
-    
-    addi $t2, $t2, 4                    # Move to the next gem
-    addi $t1, $t1, 1                    # Increment index counter
-    j generate_col_loop
+beq $t1, $t5, end_generate_col_loop      # Break loop if all 3 gem colors have been initiated
+li $v0, 42                      # Random generation
+li $a0, 0                       # Set range from 0-5 (corresponding to six colors)
+li $a1, 6
+syscall                         # Store the random selected index in $a0
+
+sll $t6, $a0, 2                 # Get color's address in memory (index * 4 bytes)
+la $t3, palette                 # Point to the start of the palette
+addu $t3, $t3, $t6              # Based on the address, get the corresponding color
+lw $t4, 0($t3)                  # Load the value of the color
+sw $t4, 0($t2)                  # Store the color in the memory (gem_color_i)
+
+# sll $t6, $a0, 2               # Get the actual gem's address in memory (used to calculate preview gem address)
+la $t3, preview_palette         # Redirect $t3 to preview palette
+addu $t3, $t3, $t6              # Based on address, get corresponding color
+lw $t4, 0($t3)                  # Load the value of the color
+sw $t4, 12($t2)                 # Store the ghost color in memory (3 indexes after the actual gem)
+
+addi $t2, $t2, 4                # Move to the next gem
+addi $t1, $t1, 1                # Increment index counter
+j generate_col_loop
 
 end_generate_col_loop:
-    lw $ra, 0($sp)                      # Restore the ra
-    addi $sp, $sp, 4  
-    jr $ra
+lw $ra, 0($sp)                  # Restore the ra
+addi $sp, $sp, 4  
+jr $ra
 
 ##############################################################################
 # Drawing the current column
@@ -1334,42 +1399,51 @@ end_move_down:
 #   $t3 = Position of left grid wall
 ##############################################################################
 move_left:
-    # Boundary check
-    lw $t2, curr_col_x                  # Load current position
-    lw $t3, grid_left                   # Load left wall position
-    addi $t3, $t3, 1                    # The first playable position within the field
-    beq $t2, $t3, game_loop             # If the column is already at edge, go back to loop (no update)
-    
-    # Check if column to the left has blocks
-    lw $a0, curr_col_x                  # Load in x
-    addi $a0, $a0, -1                   # Subtract 1 to check column to left
-    lw $s7, curr_col_y                  # Store y to check
-    
-    # Check bottom gem
-    addi $a1, $s7, 2                    # Add 2 to topmost gem y to get bottom
-    jal get_grid_value
-    bne $v0, $zero, game_loop           # Check if grid next to gem is colored
-    
-    # Erase the column in old position
-    lw $a0, curr_col_x                  # Get the current positions of topmost gem
-    lw $a1, curr_col_y
-    la $t1, black_palette               # Get the black palette for painting
-    jal draw_curr_col                   # Erase the old column (repaint with black)
-    
-    # Update position (X coordinate)
-    lw $t2, curr_col_x                  # Load the current column position
-    addi $t2, $t2, -1                   # Move left by 1
-    sw $t2, curr_col_x                  # Renew the updated X coordinate in memory
-    
-    # Draw the (same) column in new position
-    lw $a0, curr_col_x                  # Load in the new coordinates
-    lw $a1, curr_col_y
-    la $t1, gem1_color                  # Get the gem palette for normal drawing
-    jal draw_curr_col
-    
-    jal play_move_sound                 # Play sound when moving
-    
-    j game_loop                         # Move back to the game loop for next check
+addi $sp, $sp, -4
+sw $ra, 0($sp)
+
+# Boundary check
+lw $t2, curr_col_x          # Load current position
+lw $t3, grid_left           # Load left wall position
+addi $t3, $t3, 1            # The first playable position within the field
+beq $t2, $t3, move_left_exit     # If the column is already at edge, go back to loop (no update)
+
+# Erase the column in old position
+lw $a0, curr_col_x          # Get the current positions of topmost gem
+lw $a1, curr_col_y
+la $t1, black_palette       # Get the black palette for painting
+jal draw_curr_col           # Erase the old column (repaint with black)
+
+# Erase the old preview column
+jal get_landing_y
+move $a1, $v0               # Old landing Y
+lw $a0, curr_col_x          # Old X
+la $t1, black_palette
+jal draw_preview_col
+
+# Update position (X coordinate)
+lw $t2, curr_col_x          # Load the current column position
+addi $t2, $t2, -1           # Move left by 1
+sw $t2, curr_col_x          # Renew the updated X coordinate in memory
+
+jal get_landing_y
+move $a1, $v0               # New landing Y
+lw $a0, curr_col_x          # New X
+la $t1, preview_gem1_color
+jal draw_preview_col
+
+# Draw the (same) column in new position
+lw $a0, curr_col_x          # Load in the new coordinates
+lw $a1, curr_col_y
+la $t1, gem1_color          # Get the gem palette for normal drawing
+jal draw_curr_col
+
+move_left_exit:
+lw $ra, 0($sp)
+addi $sp, $sp, 4
+
+jal play_move_sound         # Play the sound of moving the column
+j game_loop                 # Move back to the game loop for next check
     
 ##############################################################################
 # Move right by one pixel (when "D" is pressed)
@@ -1380,42 +1454,52 @@ move_left:
 #   $t3 = Position of left grid wall
 ##############################################################################
 move_right:
-    # Boundary check
-    lw $t2, curr_col_x                  # Load current position
-    lw $t3, grid_right                  # Load right wall position
-    addi $t3, $t3, -1                   # The first playable position within the field
-    beq $t2, $t3, game_loop             # If the column is already at edge, go back to loop (no update)
-    
-    # Check if column to the right has blocks
-    lw $a0, curr_col_x                  # Load in x
-    addi $a0, $a0, 1                    # Add 1 to check column to right
-    lw $s7, curr_col_y                  # Store y to check
-    
-    # Check bottom gem
-    addi $a1, $s7, 2                    # Add 2 to topmost gem y to get bottom
-    jal get_grid_value
-    bne $v0, $zero, game_loop           # Check if grid next to gem is colored
-    
-    # Erase the column in old position
-    lw $a0, curr_col_x                  # Get the current positions of topmost gem
-    lw $a1, curr_col_y
-    la $t1, black_palette               # Get the black palette for painting
-    jal draw_curr_col                   # Erase the old column (repaint with black)
-    
-    # Update position (X coordinate)
-    lw $t2, curr_col_x                  # Load the current column position
-    addi $t2, $t2, 1                    # Move right by 1
-    sw $t2, curr_col_x                  # Renew the updated X coordinate in memory
-    
-    # Draw the (same) column in new position
-    lw $a0, curr_col_x                  # Load in the new coordinates
-    lw $a1, curr_col_y
-    la $t1, gem1_color                  # Get the gem palette for normal drawing
-    jal draw_curr_col
-    
-    jal play_move_sound                 # Play sound when moving
-    
-    j game_loop                         # Move back to the game loop for next check
+addi $sp, $sp, -4
+sw $ra, 0($sp)
+
+# Boundary check
+lw $t2, curr_col_x          # Load current position
+lw $t3, grid_right          # Load right wall position
+addi $t3, $t3, -1           # The first playable position within the field
+beq $t2, $t3, move_right_exit     # If the column is already at edge, go back to loop (no update)
+
+# Erase the column in old position
+lw $a0, curr_col_x          # Get the current positions of topmost gem
+lw $a1, curr_col_y
+la $t1, black_palette       # Get the black palette for painting
+jal draw_curr_col           # Erase the old column (repaint with black)
+
+# Erase the old preview column
+jal get_landing_y
+move $a1, $v0               # Old landing Y
+lw $a0, curr_col_x          # Old X
+la $t1, black_palette
+jal draw_preview_col
+
+# Update position (X coordinate)
+lw $t2, curr_col_x          # Load the current column position
+addi $t2, $t2, 1            # Move right by 1
+sw $t2, curr_col_x          # Renew the updated X coordinate in memory
+
+# Draw the new preview column
+jal get_landing_y
+move $a1, $v0               # New landing Y
+lw $a0, curr_col_x          # New X
+la $t1, preview_gem1_color
+jal draw_preview_col
+
+# Draw the (same) column in new position
+lw $a0, curr_col_x          # Load in the new coordinates
+lw $a1, curr_col_y
+la $t1, gem1_color          # Get the gem palette for normal drawing
+jal draw_curr_col
+
+move_right_exit:
+lw $ra, 0($sp)
+addi $sp, $sp, 4
+
+jal play_move_sound         # Play the sound of moving the column
+j game_loop                 # Move back to the game loop for next check
 
 ##############################################################################
 # Dropping a column to the bottom at once when "S" is pressed
@@ -1475,35 +1559,62 @@ collision_final:
 
 ##############################################################################
 # Shuffle the columns when "W" is pressed (top->mid, mid->bot, bot->top)
-#   $a0 = Current X coordinate of column (topmost gem)
-#   $a1 = Current Y coordinate of column (topmost gem)
-#   $t0 = Color of top gem
-#   $t1 = Color of middle gem
-#   $t2 = Color of bottom gem
+# - $a0 = Current X coordinate of column (topmost gem)
+# - $a1 = Current Y coordinate of column (topmost gem)
+# - $t0 = Color of top gem
+# - $t1 = Color of middle gem
+# - $t2 = Color of bottom gem
+# - $t3 = Color of the preview top gem
+# - $t4 = Color of the preview middle gem
+# - $t5 = Color of the preview bottom gem
 ##############################################################################
-shuffle_col:
-    # Load current colors of the column
-    lw $t0, gem1_color                  # top
-    lw $t1, gem2_color                  # mid
-    lw $t2, gem3_color                  # bot
+shuffle_col:        
+addi $sp, $sp, -4
+sw $ra, 0($sp)
+
+# ERASE the old preview
+jal get_landing_y
+move $a1, $v0
+lw $a0, curr_col_x
+la $t1, black_palette
+jal draw_preview_col
+
+# Load current colors of the column
+lw $t0, gem1_color          # top
+lw $t1, gem2_color          # mid
+lw $t2, gem3_color          # bot
+
+# Swap the colors in order
+sw $t2, gem1_color          # bot->top
+sw $t0, gem2_color          # top->mid
+sw $t1, gem3_color          # mid->bot
+
+lw $t3, preview_gem1_color    # Apply the same shuffling logiv to preview gems
+lw $t4, preview_gem2_color
+lw $t5, preview_gem3_color
     
-    # Swap the colors in order
-    sw $t2, gem1_color                  # bot->top
-    sw $t0, gem2_color                  # top->mid
-    sw $t1, gem3_color                  # mid->bot
-    
-    # Redraw the column at same position with shuffled colors
-    lw $a0, curr_col_x
-    lw $a1, curr_col_y
-    la $t1, gem1_color                  # The new gem color order
-    jal draw_curr_col
-    
-    # TO BE CHANGED: Redraw the displayed column (on the side) if we decide to display current col
-    # IGNORE if display/preview next col (no need to update with shuffle)
-    
-    jal play_shuffle_sound              # Play sound when shuffling
-    
-    j game_loop                         # Return to the game loop for next input
+sw $t5, preview_gem1_color
+sw $t3, preview_gem2_color
+sw $t4, preview_gem3_color
+
+# Redraw the column at the preview position
+jal get_landing_y           # Get the position for preview gems
+move $a1, $v0               # Move the position into $a1
+lw $a0, curr_col_x
+la $t1, preview_gem1_color      # Use the preview palette
+jal draw_preview_col
+
+# Redraw the column at same position with shuffled colors
+lw $a0, curr_col_x
+lw $a1, curr_col_y
+la $t1, gem1_color          # The new gem color order
+jal draw_curr_col
+
+lw $ra, 0($sp)
+addi $sp, $sp, 4
+
+jal play_shuffle_sound      # Play the sound for shuffling
+j game_loop                 # Return to the game loop for next input
 
 ##############################################################################
 # Check if a grid within the playing field is occupied
@@ -1581,8 +1692,11 @@ collision:
 # Handles collision when gravity causes column to collide with bottom
 handle_collision:
     # Save ra to stack
-    addi $sp, $sp, -4                   # Move stack pointer
-    sw $ra, 0($sp)                      # Save ra
+    addi $sp, $sp, -20
+    sw $ra, 16($sp)
+    sw $s0, 12($sp)
+    sw $s1, 8($sp)
+    sw $s4, 4($sp)
     
     jal lock_curr_col
 
@@ -1604,24 +1718,52 @@ chain_reaction_loop:
     j chain_reaction_loop               # Continue checking for new matches
     
 end_collision:
-    # Check for Game Over condition (column hits top)
-    jal check_game_end
+# Check for Game Over condition (column hits top)
+jal check_game_end
+
+jal get_landing_y           # Erase the old preview column
+move $a1, $v0
+lw $a0, curr_col_x
+la $t1, black_palette
+jal draw_preview_col
+
+lw $a0, display_x           # Erase the old "next" column display
+lw $a1, display_y
+la $t1, black_palette
+jal draw_curr_col
+
+# Re-initialze coordinates for next piece
+jal respawn
+
+jal generate_col            # Generate new column at initial position
+lw $a0, curr_col_x          # Load the initialized position     
+lw $a1, curr_col_y
+la $t1, gem1_color          # Get the new gem color
+jal draw_curr_col           # Draw the new column in playing field 
+
+jal get_landing_y           # Calculate & paint the new preview column
+move $a1, $v0
+lw $a0, curr_col_x
+la $t1, preview_gem1_color  # Use the preview palette
+jal draw_preview_col
+
+# Update the column in the display area 
+lw $a0, display_x              # Load coordinates in display area 
+lw $a1, display_y
+la $t1, next_gem1_color        # Load the initialized color
+jal draw_curr_col              # Draw the new column
+
+lw $a0, curr_col_x             # Change the values in $a0, $a1 to coordinates in playing field
+lw $a1, curr_col_y
+
+# Restore the stack in order
+lw $s4, 4($sp)
+lw $s1, 8($sp)
+lw $s0, 12($sp)
+lw $ra, 16($sp)
+addi $sp, $sp, 20           # Pop one-by-one in reverse
     
-    # Re-initialze coordinates for next piece if game continues
-    jal respawn
-    jal generate_col                    # Generate new column at initial position
-    
-    # Draw new column
-    lw $a0, curr_col_x                  # Load the initialized position     
-    lw $a1, curr_col_y
-    la $t1, gem1_color                  # Get the new gem color
-    jal draw_curr_col                   # Draw the new column in playing field 
-    
-    # Restore ra
-    lw $ra, 0($sp)
-    addi $sp, $sp, 4                   # Pop one-by-one in reverse
-        
-    jr $ra                             # Return to ra
+j game_loop                 # Jump back to game_loop & wait for next key
     
 ##############################################################################
 # Lock current column in place & store it in grid memory
@@ -2316,4 +2458,116 @@ skip_midi:
 end_music:
     lw $ra, 0($sp)
     addi $sp, $sp, 4
+    jr $ra
+
+
+### Get the Y-coordinate of the lowest landing position WITHOUT moving the column
+### Variables:
+### - $a0: Grid index in memory for X coordinates
+### - $a1: Grid index in memory for Y coordinates
+### - $v0: Return value of Y coordinate for landing
+### - $v1: Color found in the grid spot
+### - $s0: X coordinate of current column
+### - $s1: Y coordinate of current column (top gem)
+### - $s2: Checker for the grid space directly below the bottom gem
+### - $t2: The grid directly below the column
+
+get_landing_y:
+    # Preserve registers on stack
+    addi $sp, $sp, -16
+    sw $ra, 12($sp)
+    sw $s0, 8($sp)
+    sw $s1, 4($sp)
+    sw $s2, 0($sp)
+
+    lw $s0, curr_col_x          # Constant X for this check
+    lw $s1, curr_col_y          # The Y of the current column being checked
+    lw $s2, grid_bot            # Bottom boundary of the playing field
+
+landing_loop:
+    addi $t2, $s1, 3            # Get the grid space exactly one below the current column
+    
+    bge $t2, $s2, hit_something # Check if the floor is hit
+
+    # Check an existing gem is hit
+    move $a0, $s0               # Load the current X coordinates
+    move $a1, $t2               # Load the Y of the current grid being checked
+    jal get_grid_value          # Returns color of that grad space
+    
+    # If the color returned is not 0, a gem is hit
+    bne $v0, $zero, hit_something 
+
+    # If no collision happens, keep looping
+    addi $s1, $s1, 1
+    j landing_loop
+
+hit_something:
+    move $v0, $s1           # Load the final top-gem Y position
+    
+    lw $s2, 0($sp)          # Restore the registers
+    lw $s1, 4($sp)
+    lw $s0, 8($sp)
+    lw $ra, 12($sp)
+    addi $sp, $sp, 16
+    jr $ra
+    
+    
+### Draw the preview column
+### Variables:
+### - $s0: Holder of X cooridnate value
+### - $s1: Holder of Y cooridnate value
+### - $s2: Holder of current color
+### - $s3: the counter value
+### - $s4: maximum number of gems that need to be painted
+### - $a0: Holder of X cooridnate value
+### - $a1: Holder of Y cooridnate value
+### - $v0: Output of the current grid's color
+### - $t1: Pointer to current color
+
+draw_preview_col:
+    # Save everything onto the stack (avoid gem vanishing in newly generated column)
+    addi $sp, $sp, -28
+    sw $ra, 24($sp)
+    sw $s0, 20($sp)
+    sw $s1, 16($sp)
+    sw $s2, 12($sp)
+    sw $s3, 8($sp)
+    sw $s4, 4($sp)
+    sw $t1, 0($sp)
+
+    move $s0, $a0           # Get the current X coordinates
+    move $s1, $a1           # Get the current X coordinates (top gem)
+    move $s2, $t1           # Point to the current color
+    li $s3, 0               # Initialize the counter
+    li $s4, 3               # Load the maximum number of preview gems needing to be painted
+
+draw_preview_loop:
+    beq $s3, $s4, end_preview_loop
+
+    move $a0, $s0           # Pass in X
+    move $a1, $s1           # Pass in Y
+    jal get_grid_value      # Returns color of that space in $v0
+    bne $v0, $zero, skip_preview_pixel  # If there is an existing gem (color is not black), do not paint
+
+    # If grid is empty, draw the preview gems
+    lw $a2, 0($s2)          # Load the preview colors
+    move $a0, $s0           # Restore X for draw_pixel
+    move $a1, $s1           # Restore Y for draw_pixel
+    jal draw_pixel          
+
+skip_preview_pixel:
+    addi $s1, $s1, 1        # Increment Y to move to the next gem
+    addi $s2, $s2, 4        # Move to the next gem color in memory
+    addi $s3, $s3, 1        # Increment loop counter
+    j draw_preview_loop
+
+end_preview_loop:
+    lw $t1, 0($sp)          # Restore all variables stored in stack
+    lw $s4, 4($sp)
+    lw $s3, 8($sp)
+    lw $s2, 12($sp)
+    lw $s1, 16($sp)
+    lw $s0, 20($sp)
+    lw $ra, 24($sp)
+    addi $sp, $sp, 28
     jr $ra
